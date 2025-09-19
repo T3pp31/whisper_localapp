@@ -45,6 +45,13 @@ pub const MODEL_CATALOG: &[ModelDefinition] = &[
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
         size_mb: Some(1620.0),
     },
+    ModelDefinition {
+        id: "large-q5_0",
+        label: "Large v3 Turbo q5_0 (~548MB)",
+        filename: "ggml-large-v3-turbo-q5_0.bin",
+        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
+        size_mb: Some(548.0),
+    },
 ];
 
 pub fn get_model_definition(id: &str) -> Option<&'static ModelDefinition> {

@@ -1,0 +1,34 @@
+[whisper]
+model_path = 'models\ggml-large-v3-turbo-q5_0.bin'
+default_model = "large-q5_0"
+language = "auto"
+
+[audio]
+sample_rate = 16000
+channels = 1
+buffer_size = 4096
+
+[gui]
+window_width = 800.0
+window_height = 600.0
+window_title = "Whisper音声文字起こし"
+theme = "Light"
+
+[performance]
+audio_threads = 10
+whisper_threads = 20
+use_gpu = false
+
+[paths]
+models_dir = "models"
+output_dir = "output"
+temp_dir = "temp"
+
+[output]
+default_format = "txt"
+supported_formats = [
+    "txt",
+    "srt",
+    "vtt",
+]
+auto_save = true

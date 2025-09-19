@@ -93,10 +93,39 @@ async fn load_audio_metadata(path: String, state: State<'_, AppState>) -> Result
 }
 
 #[tauri::command]
+async fn prepare_preview_wav(path: String, state: State<'_, AppState>) -> Result<String, String> {
+    let config = state
+        .config
+        .lock()
+        .map_err(|_| "設定の読み込みに失敗しました")?
+        .clone();
+
+    let mut processor = AudioProcessor::new(&config)
+        .map_err(|e| format!("オーディオ処理の初期化に失敗しました: {}", e))?;
+
+    let preview_path = PathBuf::from(&config.paths.temp_dir).join("preview.wav");
+    // 古いファイルを消す
+    if preview_path.exists() {
+        let _ = std::fs::remove_file(&preview_path);
+    }
+
+    processor
+        .decode_to_wav_file(&path, &preview_path.to_string_lossy())
+        .map_err(|e| format!("プレビューWAV生成に失敗しました: {}", e))?;
+
+    Ok(preview_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 async fn update_language_setting(language: String, state: State<'_, AppState>) -> Result<(), String> {
     let mut config = state.config.lock().map_err(|_| "設定の更新に失敗しました")?;
     config.whisper.language = language;
-    config.save().map_err(|e| format!("設定の保存に失敗しました: {}", e))?;
+    #[cfg(not(debug_assertions))]
+    {
+        config
+            .save()
+            .map_err(|e| format!("設定の保存に失敗しました: {}", e))?;
+    }
 
     // Whisperエンジンをリセット
     let mut engine = state.whisper_engine.lock().map_err(|_| "エンジンのリセットに失敗しました")?;
@@ -240,7 +269,13 @@ fn select_model(model_id: String, state: State<'_, AppState>) -> Result<String, 
 
     config.whisper.model_path = model_path.to_string_lossy().to_string();
     config.whisper.default_model = model_id.clone();
-    config.save().map_err(|e| format!("設定の保存に失敗しました: {}", e))?;
+    // 開発時のホットリロード回避: debug ビルドではファイル保存をスキップ
+    #[cfg(not(debug_assertions))]
+    {
+        config
+            .save()
+            .map_err(|e| format!("設定の保存に失敗しました: {}", e))?;
+    }
 
     // Whisperエンジンをリセット
     let mut engine = state.whisper_engine.lock().map_err(|_| "エンジンのリセットに失敗しました")?;
@@ -271,6 +306,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             select_audio_file,
             load_audio_metadata,
+            prepare_preview_wav,
             update_language_setting,
             start_transcription,
             copy_to_clipboard,

@@ -28,8 +28,6 @@ models/*.bin
 output/
 temp/
 
-# Configuration (may contain sensitive paths)
-config.toml
 
 # Logs
 *.log

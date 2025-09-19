@@ -227,6 +227,13 @@ impl AudioProcessor {
         Ok(resampled)
     }
 
+    pub fn decode_to_wav_file(&mut self, src_path: &str, dst_path: &str) -> Result<()> {
+        let samples_f32 = self.load_audio_file(src_path)?;
+        let sr = self.config.audio.sample_rate as u32;
+        write_wav_mono_16(dst_path, sr, &samples_f32)?;
+        Ok(())
+    }
+
     fn extract_samples_from_buffer(
         &self,
         audio_buf: &AudioBufferRef,
@@ -325,4 +332,46 @@ impl AudioProcessor {
 
         Ok(output_channels[0].clone())
     }
+}
+
+fn write_wav_mono_16(path: &str, sample_rate: u32, samples: &[f32]) -> Result<()> {
+    use std::fs::File;
+    use std::io::{Seek, SeekFrom, Write};
+
+    let mut file = File::create(path)?;
+
+    // RIFF header
+    file.write_all(b"RIFF")?;
+    file.write_all(&[0u8; 4])?; // placeholder for chunk size
+    file.write_all(b"WAVE")?;
+
+    // fmt chunk
+    file.write_all(b"fmt ")?;
+    file.write_all(&16u32.to_le_bytes())?; // PCM fmt chunk size
+    file.write_all(&1u16.to_le_bytes())?; // Audio format = 1 (PCM)
+    file.write_all(&1u16.to_le_bytes())?; // Channels = 1
+    file.write_all(&sample_rate.to_le_bytes())?; // Sample rate
+    let byte_rate: u32 = sample_rate * 1 * 2; // sr * channels * bytes_per_sample
+    file.write_all(&byte_rate.to_le_bytes())?;
+    let block_align: u16 = 1 * 2; // channels * bytes_per_sample
+    file.write_all(&block_align.to_le_bytes())?;
+    file.write_all(&16u16.to_le_bytes())?; // bits per sample
+
+    // data chunk
+    file.write_all(b"data")?;
+    let data_bytes: u32 = (samples.len() as u32) * 2; // i16
+    file.write_all(&data_bytes.to_le_bytes())?;
+
+    // samples
+    for &s in samples.iter() {
+        let v = (s.max(-1.0).min(1.0) * i16::MAX as f32) as i16;
+        file.write_all(&v.to_le_bytes())?;
+    }
+
+    // finalize RIFF chunk size = 4 ("WAVE") + (8+fmt) + (8+data)
+    let riff_size: u32 = 4 + (8 + 16) + (8 + data_bytes);
+    file.seek(SeekFrom::Start(4))?;
+    file.write_all(&riff_size.to_le_bytes())?;
+
+    Ok(())
 }

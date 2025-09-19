@@ -1,4 +1,4 @@
-const { invoke } = window.__TAURI__.tauri;
+const { invoke, convertFileSrc } = window.__TAURI__.tauri;
 
 class WhisperApp {
     constructor() {
@@ -10,6 +10,10 @@ class WhisperApp {
         this.isClickPlay = false;
         this.selectedLanguage = 'ja';
         this.translateToEnglish = false;
+
+        this.audio = new Audio();
+        this.audio.preload = 'auto';
+        this._bindAudioEvents();
 
         this.initializeElements();
         this.attachEventListeners();
@@ -65,6 +69,9 @@ class WhisperApp {
         this.playPauseBtn.addEventListener('click', () => this.togglePlayPause());
         this.progressSlider.addEventListener('input', (e) => this.seekAudio(e.target.value));
 
+        // 結果テキストのクリック再生
+        this.transcriptionResults.addEventListener('click', (e) => this.onResultsClick(e));
+
         // 文字起こし範囲スライダー
         this.startRangeSlider.addEventListener('input', (e) => this.updateStartTime(e.target.value));
         this.endRangeSlider.addEventListener('input', (e) => this.updateEndTime(e.target.value));
@@ -95,6 +102,16 @@ class WhisperApp {
             const metadata = await invoke('load_audio_metadata', { path });
             this.currentAudioPath = path;
             this.showMediaControls(metadata);
+            // 再生用にWAVプレビューを生成（ブラウザのコーデック差異を回避）
+            try {
+                const previewPath = await invoke('prepare_preview_wav', { path });
+                this.setAudioSource(previewPath);
+                this.addLog('プレビュー音声を準備しました');
+            } catch (e) {
+                // 失敗時は元ファイルにフォールバック
+                this.setAudioSource(path);
+                this.addLog(`プレビュー生成に失敗: 元ファイルで再生を試みます (${e})`);
+            }
             this.addLog(`音声ファイルを読み込みました: ${this.formatDuration(metadata.duration)}`);
         } catch (error) {
             this.addLog(`音声読み込みエラー: ${error}`);
@@ -288,15 +305,137 @@ class WhisperApp {
     }
 
     togglePlayPause() {
-        // 実際の音声再生機能は後で実装
-        const isPlaying = this.playPauseBtn.textContent === '⏸';
-        this.playPauseBtn.textContent = isPlaying ? '▶' : '⏸';
-        this.addLog(isPlaying ? '再生を停止しました' : '再生を開始しました');
+        if (!this.audio || !this.audio.src) {
+            this.addLog('再生できる音声がありません');
+            return;
+        }
+        if (this.audio.paused) {
+            this.audio.play()
+                .then(() => {
+                    this.playPauseBtn.textContent = '⏸';
+                    this.addLog('再生を開始しました');
+                })
+                .catch((err) => {
+                    this.addLog(`再生失敗: ${err && err.message ? err.message : err}`);
+                });
+        } else {
+            this.audio.pause();
+            this.playPauseBtn.textContent = '▶';
+            this.addLog('再生を停止しました');
+        }
     }
 
     seekAudio(value) {
-        // 実際のシーク機能は後で実装
-        this.addLog(`シーク: ${value}%`);
+        if (!this.audioDuration || !this.audio) return;
+        const pct = Math.max(0, Math.min(100, Number(value)));
+        const t = (pct / 100) * this.audioDuration;
+        this.audio.currentTime = t;
+    }
+
+    setAudioSource(path) {
+        try {
+            let url;
+            if (typeof convertFileSrc === 'function') {
+                url = convertFileSrc(path);
+            } else if (window.__TAURI__ && typeof window.__TAURI__.convertFileSrc === 'function') {
+                url = window.__TAURI__.convertFileSrc(path);
+            } else {
+                url = path; // 最低限のフォールバック
+            }
+            this.audio.src = url;
+            try { this.audio.load(); } catch (_) {}
+            this.playPauseBtn.textContent = '▶';
+        } catch (_) {
+            this.addLog('音声の読み込みURL生成に失敗しました');
+        }
+    }
+
+    _bindAudioEvents() {
+        this.audio.addEventListener('loadedmetadata', () => {
+            if (isFinite(this.audio.duration)) {
+                this.audioDuration = this.audio.duration;
+                this.updateTimeDisplay(this.audioDuration);
+                this.progressSlider.value = 0;
+            }
+        });
+        this.audio.addEventListener('timeupdate', () => {
+            if (!this.audioDuration) return;
+            const cur = this.audio.currentTime;
+            const pct = (cur / this.audioDuration) * 100;
+            this.progressSlider.value = Math.max(0, Math.min(100, pct));
+            const currentTimeEl = document.getElementById('current-time');
+            if (currentTimeEl) currentTimeEl.textContent = this.formatDuration(cur);
+        });
+        this.audio.addEventListener('ended', () => {
+            this.playPauseBtn.textContent = '▶';
+        });
+        this.audio.addEventListener('play', () => {
+            this.addLog('audio: play');
+        });
+        this.audio.addEventListener('pause', () => {
+            this.addLog('audio: pause');
+        });
+        this.audio.addEventListener('seeking', () => {
+            this.addLog(`audio: seeking -> ${this.formatDuration(this.audio.currentTime || 0)}`);
+        });
+        this.audio.addEventListener('seeked', () => {
+            this.addLog(`audio: seeked -> ${this.formatDuration(this.audio.currentTime || 0)}`);
+        });
+        this.audio.addEventListener('waiting', () => {
+            this.addLog('audio: waiting');
+        });
+        this.audio.addEventListener('stalled', () => {
+            this.addLog('audio: stalled');
+        });
+        this.audio.addEventListener('error', () => {
+            const err = this.audio.error;
+            const codes = {
+                1: 'ABORTED',
+                2: 'NETWORK',
+                3: 'DECODE',
+                4: 'SRC_NOT_SUPPORTED'
+            };
+            const msg = err ? `code=${err.code} (${codes[err.code] || 'UNKNOWN'})` : 'unknown';
+            this.addLog(`audio: error ${msg}`);
+        });
+    }
+
+    onResultsClick(e) {
+        if (!this.isClickPlay) return;
+        const text = this.transcriptionResults.value || '';
+        if (!text) return;
+
+        const pos = this.transcriptionResults.selectionStart || 0;
+        const lineStart = text.lastIndexOf('\n', Math.max(0, pos - 1)) + 1;
+        const nextNl = text.indexOf('\n', pos);
+        const lineEnd = nextNl === -1 ? text.length : nextNl;
+        const line = text.slice(lineStart, lineEnd);
+
+        const m = line.match(/^\s*\[(\d{2}):(\d{2}):(\d{2})(?:[\.,](\d{2,3}))?\s*-->/);
+        if (!m) {
+            this.addLog('クリック位置の行にタイムスタンプが見つかりません');
+            return;
+        }
+        const h = parseInt(m[1], 10) || 0;
+        const min = parseInt(m[2], 10) || 0;
+        const s = parseInt(m[3], 10) || 0;
+        const ms = parseInt(m[4] || '0', 10) || 0;
+        const sec = h * 3600 + min * 60 + s + ms / 1000;
+        if (!this.audio || !this.audio.src) {
+            this.addLog('音声が読み込まれていません');
+            return;
+        }
+        if (isFinite(sec)) {
+            this.audio.currentTime = Math.max(0, Math.min(this.audioDuration || sec, sec));
+            this.audio.play()
+                .then(() => {
+                    this.playPauseBtn.textContent = '⏸';
+                    this.addLog(`クリック再生: ${this.formatDuration(sec)}`);
+                })
+                .catch((err) => {
+                    this.addLog(`クリック再生失敗: ${err && err.message ? err.message : err}`);
+                });
+        }
     }
 
     addLog(message) {
