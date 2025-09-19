@@ -1,0 +1,35 @@
+# Rust
+**/target
+Cargo.lock
+*.pdb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Whisper models (large files)
+*.bin
+models/*.bin
+
+# Audio files (potentially large)
+*.wav
+*.mp3
+*.flac
+*.m4a
+
+# Output files
+output/
+temp/
+
+# Configuration (may contain sensitive paths)
+config.toml
+
+# Logs
+*.log

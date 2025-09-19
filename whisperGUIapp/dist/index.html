@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Whisper音声文字起こし</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="container">
+    <header>
+      <h1>Whisper音声文字起こし</h1>
+      <p class="subtitle">Whisper.cpp を使ったローカル音声文字起こしツール</p>
+    </header>
+
+    <section class="card">
+      <div class="row">
+        <label for="model-select" class="model-label">モデル</label>
+        <select id="model-select" class="model-select">
+          <option value="">読み込み中...</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <button id="select-file" class="btn primary">音声ファイルを選択</button>
+        <span id="selected-file" class="file-label">未選択</span>
+      </div>
+
+      <div class="row">
+        <button id="start-transcription" class="btn accent" disabled>文字起こし開始</button>
+        <button id="copy-result" class="btn" disabled>結果をコピー</button>
+        <button id="save-result" class="btn" disabled>結果を保存</button>
+      </div>
+
+      <div id="status" class="status" data-state="idle">音声ファイルを選択してください。</div>
+    </section>
+
+    <section class="card">
+      <label for="transcription-result">文字起こし結果</label>
+      <textarea id="transcription-result" rows="16" readonly placeholder="文字起こし結果がここに表示されます"></textarea>
+    </section>
+  </main>
+
+  <script src="main.js"></script>
+</body>
+</html>

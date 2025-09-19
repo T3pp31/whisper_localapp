@@ -1,0 +1,57 @@
+{
+  "$schema": "https://schema.tauri.app/config/1",
+  "package": {
+    "productName": "whisperGUIapp",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": false,
+      "dialog": {
+        "all": false,
+        "open": true,
+        "save": true
+      },
+      "path": {
+        "all": true
+      },
+      "window": {
+        "all": false,
+        "create": true
+      },
+      "fs": {
+        "all": false,
+        "writeFile": true
+      }
+    },
+    "bundle": {
+      "active": true,
+      "identifier": "com.whisper.localapp",
+      "targets": [
+        "msi"
+      ],
+      "windows": {
+        "wix": {
+          "language": "ja-JP"
+        }
+      },
+      "resources": [
+        "config.toml"
+      ]
+    },
+    "windows": [
+      {
+        "title": "Whisper音声文字起こし",
+        "width": 900,
+        "height": 640,
+        "resizable": true
+      }
+    ]
+  },
+  "build": {
+    "beforeDevCommand": "",
+    "beforeBuildCommand": "",
+    "devPath": "dist",
+    "distDir": "dist"
+  }
+}

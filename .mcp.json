@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "serena": {
+      "type": "stdio",
+      "command": "python -m serena start-mcp-server --transport stdio --context ide-assistant --project /mnt/c/github/whisper_localapp",
+      "args": [],
+      "env": {}
+    }
+  }
+}
