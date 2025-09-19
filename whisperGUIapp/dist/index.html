@@ -1,46 +1,158 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Whisper音声文字起こし</title>
-  <link rel="stylesheet" href="styles.css" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Whisper 音声文字起こし</title>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <main class="container">
-    <header>
-      <h1>Whisper音声文字起こし</h1>
-      <p class="subtitle">Whisper.cpp を使ったローカル音声文字起こしツール</p>
-    </header>
+    <div class="container">
+        <header>
+            <h1>Whisper 音声文字起こし</h1>
+        </header>
 
-    <section class="card">
-      <div class="row">
-        <label for="model-select" class="model-label">モデル</label>
-        <select id="model-select" class="model-select">
-          <option value="">読み込み中...</option>
-        </select>
-      </div>
+        <main class="main-content">
+            <div class="left-panel">
+                <!-- 映像・音声セクション -->
+                <section class="control-section">
+                    <h2>映像・音声</h2>
+                    <div class="file-selector">
+                        <input type="text" id="audio-path-input" placeholder="音声ファイルを指定してください" readonly>
+                        <button id="browse-button">参照...</button>
+                        <button id="load-button">読み込み</button>
+                    </div>
 
-      <div class="row">
-        <button id="select-file" class="btn primary">音声ファイルを選択</button>
-        <span id="selected-file" class="file-label">未選択</span>
-      </div>
+                    <div class="media-controls" id="media-controls" style="display: none;">
+                        <div class="progress-bar">
+                            <span id="current-time">1:35</span>
+                            <input type="range" id="progress-slider" min="0" max="100" value="75">
+                            <span id="total-time">1:35</span>
+                        </div>
+                        <div class="control-buttons">
+                            <button id="play-pause-btn">▶</button>
+                            <button id="volume-btn">🔊</button>
+                        </div>
+                    </div>
 
-      <div class="row">
-        <button id="start-transcription" class="btn accent" disabled>文字起こし開始</button>
-        <button id="copy-result" class="btn" disabled>結果をコピー</button>
-        <button id="save-result" class="btn" disabled>結果を保存</button>
-      </div>
+                    <!-- 文字起こし範囲 -->
+                    <div class="transcription-range" id="transcription-range" style="display: none;">
+                        <h3>文字起こし範囲</h3>
+                        <div class="time-controls">
+                            <div class="time-input-group">
+                                <label>開始</label>
+                                <input type="text" id="start-time" value="00:00:00" readonly>
+                            </div>
+                            <div class="time-input-group">
+                                <label>終了</label>
+                                <input type="text" id="end-time" value="00:01:35" readonly>
+                            </div>
+                        </div>
+                        <div class="range-slider">
+                            <input type="range" id="start-range" min="0" max="100" value="0">
+                            <input type="range" id="end-range" min="0" max="100" value="100">
+                        </div>
+                    </div>
+                </section>
 
-      <div id="status" class="status" data-state="idle">音声ファイルを選択してください。</div>
-    </section>
+                <!-- 言語モデルセクション -->
+                <section class="model-section">
+                    <h2>言語モデル</h2>
+                    <div class="model-selector">
+                        <input type="text" id="model-path-input" placeholder="モデルファイルを指定してください" readonly>
+                        <button id="browse-model-button">参照...</button>
+                        <button id="update-model-button">更新</button>
+                    </div>
+                    <div class="model-dropdown">
+                        <label>カタログから選択</label>
+                        <select id="model-select">
+                            <option value="">未選択</option>
+                            <option value="ggml-large-v3-turbo-q8_0">ggml-large-v3-turbo-q8_0.bin</option>
+                            <option value="ggml-base">ggml-base.bin</option>
+                            <option value="ggml-small">ggml-small.bin</option>
+                        </select>
+                        <button id="switch-model-button">モデル切替</button>
+                    </div>
+                </section>
 
-    <section class="card">
-      <label for="transcription-result">文字起こし結果</label>
-      <textarea id="transcription-result" rows="16" readonly placeholder="文字起こし結果がここに表示されます"></textarea>
-    </section>
-  </main>
+                <!-- 音声の言語セクション -->
+                <section class="language-section">
+                    <h2>音声の言語</h2>
+                    <div class="language-controls">
+                        <div class="language-selector">
+                            <select id="language-select">
+                                <option value="auto">自動検出</option>
+                                <option value="ja" selected>日本語</option>
+                                <option value="en">English</option>
+                                <option value="zh">中文</option>
+                                <option value="ko">한국어</option>
+                            </select>
+                        </div>
+                        <div class="translate-option">
+                            <span>英語に翻訳して書き起こす</span>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="translate-toggle">
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                </section>
 
-  <script src="main.js"></script>
+                <!-- 文字起こし開始ボタン -->
+                <div class="transcription-controls">
+                    <button id="start-transcription" class="primary-button">文字起こし開始</button>
+                </div>
+            </div>
+
+            <div class="right-panel">
+                <!-- システム情報 -->
+                <section class="system-info">
+                    <h2>システム情報</h2>
+                    <div class="log-container" id="log-container">
+                        <div class="log-entry">
+                            <span class="timestamp">[2025/9/19 11:52:45]</span>
+                            <span class="message">初期設定中...</span>
+                        </div>
+                        <div class="log-entry">
+                            <span class="timestamp">[2025/9/19 11:52:51]</span>
+                            <span class="message">初期化が完了しました。文字起こしが可能です。</span>
+                        </div>
+                        <div class="log-entry">
+                            <span class="timestamp">[2025/9/19 11:55:48]</span>
+                            <span class="message">文字起こしが完了しました</span>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 解析結果 -->
+                <section class="results-section">
+                    <div class="results-header">
+                        <h2>解析結果</h2>
+                        <div class="controls-row">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="edit-mode-toggle">
+                                <span class="slider"></span>
+                                <span class="label">編集モード</span>
+                            </label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="click-play-toggle">
+                                <span class="slider"></span>
+                                <span class="label">クリック再生</span>
+                            </label>
+                            <div class="right-actions">
+                                <button id="copy-results" class="secondary-button">解析結果をコピー</button>
+                                <button id="clear-results" class="secondary-button">結果クリア</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="results-content">
+                        <textarea id="transcription-results" placeholder="文字起こし結果はまだありません" readonly></textarea>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <script src="main.js"></script>
 </body>
 </html>

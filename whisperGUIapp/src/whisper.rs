@@ -10,10 +10,11 @@ pub struct WhisperEngine {
 }
 
 impl WhisperEngine {
-    fn make_params<'a>(&'a self) -> FullParams<'a, 'static> {
+    fn make_params<'a>(&'a self, language_override: Option<&'a str>) -> FullParams<'a, 'static> {
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
 
-        if let Some(language) = self.language.as_deref() {
+        // 優先順位: 呼び出し時の指定 > エンジン既定
+        if let Some(language) = language_override.or(self.language.as_deref()) {
             params.set_language(Some(language));
         }
 
@@ -68,7 +69,7 @@ impl WhisperEngine {
         }
 
         // 文字起こし実行
-        let params = self.make_params();
+        let params = self.make_params(None);
         state
             .full(params, audio_data)
             .map_err(|e| anyhow::anyhow!("文字起こしに失敗: {}", e))?;
@@ -101,6 +102,8 @@ impl WhisperEngine {
     pub fn transcribe_with_timestamps(
         &self,
         audio_data: &[f32],
+        translate_to_english: bool,
+        language: Option<&str>,
     ) -> Result<Vec<TranscriptionSegment>> {
         let mut state = self
             .context
@@ -108,8 +111,9 @@ impl WhisperEngine {
             .map_err(|e| anyhow::anyhow!("Whisper状態の作成に失敗: {}", e))?;
 
         // タイムスタンプ付きのパラメータを設定
-        let mut params = self.make_params();
+        let mut params = self.make_params(language);
         params.set_print_timestamps(true);
+        params.set_translate(translate_to_english);
 
         state
             .full(params, audio_data)

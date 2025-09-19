@@ -40,10 +40,10 @@ pub const MODEL_CATALOG: &[ModelDefinition] = &[
     },
     ModelDefinition {
         id: "large",
-        label: "Large (~1.55GB)",
-        filename: "ggml-large.bin",
-        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large.bin",
-        size_mb: Some(1550.0),
+        label: "Large v3 Turbo (~1.62GB)",
+        filename: "ggml-large-v3-turbo.bin",
+        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
+        size_mb: Some(1620.0),
     },
 ];
 

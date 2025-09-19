@@ -1,18 +1,23 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
+)]
 
 mod audio;
 mod config;
 mod models;
 mod whisper;
 
-use audio::AudioProcessor;
+use audio::{AudioProcessor};
 use config::Config;
-use models::{get_model_definition, ModelInfo, MODEL_CATALOG};
+use models::{ModelDefinition, MODEL_CATALOG};
 use whisper::WhisperEngine;
 
+use serde::{Deserialize, Serialize};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use tauri::Manager;
+use tauri::{ClipboardManager, State};
 
 #[derive(Clone)]
 struct AppState {
@@ -21,7 +26,7 @@ struct AppState {
 }
 
 impl AppState {
-    fn initialize() -> anyhow::Result<Self> {
+    fn new() -> anyhow::Result<Self> {
         let config = Config::load()?;
         config.ensure_directories()?;
 
@@ -32,431 +37,259 @@ impl AppState {
     }
 }
 
-#[derive(Clone, serde::Serialize)]
-struct StatusPayload {
-    message: String,
+#[derive(Serialize, Deserialize)]
+struct AudioMetadataResponse {
+    duration: f32,
+    sample_rate: u32,
 }
 
-#[derive(Clone, serde::Serialize)]
-struct CompletedPayload {
+#[derive(Serialize, Deserialize)]
+struct TranscriptionResult {
     text: String,
-    source_path: String,
+    segments: usize,
 }
 
-#[derive(Clone, serde::Serialize)]
-struct ModelDownloadPayload {
-    model_id: String,
-    status: String,
-    message: String,
-    progress: Option<f64>,
+#[derive(Serialize, Deserialize)]
+struct ModelInfo {
+    id: String,
+    label: String,
+    filename: String,
+    path: String,
+    downloaded: bool,
+    current: bool,
+    size_mb: Option<f64>,
 }
 
-#[derive(Clone, serde::Serialize)]
-struct ModelSelectedPayload {
-    model_id: String,
-    model_path: String,
+// Tauri コマンドハンドラー
+#[tauri::command]
+fn select_audio_file() -> Result<String, String> {
+    use tauri::api::dialog::blocking::FileDialogBuilder;
+
+    let file_path = FileDialogBuilder::new()
+        // mp4, wav を含む一般的な音声/動画コンテナを許可
+        .add_filter("Audio Files", &["mp3", "wav", "m4a", "flac", "ogg", "mp4"])
+        .pick_file();
+
+    match file_path {
+        Some(path) => Ok(path.to_string_lossy().to_string()),
+        None => Err("ファイルが選択されませんでした".to_string()),
+    }
 }
 
 #[tauri::command]
-async fn list_models(state: tauri::State<'_, AppState>) -> Result<Vec<ModelInfo>, String> {
-    let app_state = state.inner();
-    let config_handle = app_state.config.clone();
+async fn load_audio_metadata(path: String, state: State<'_, AppState>) -> Result<AudioMetadataResponse, String> {
+    let config = state.config.lock().map_err(|_| "設定の読み込みに失敗しました")?;
 
-    let (config_snapshot, models_dir) = match config_handle.lock() {
-        Ok(guard) => (guard.clone(), guard.paths.models_dir.clone()),
-        Err(_) => {
-            return Err("設定の読み込みに失敗しました".into());
-        }
+    let processor = AudioProcessor::new(&*config)
+        .map_err(|e| format!("オーディオ処理の初期化に失敗しました: {}", e))?;
+
+    let metadata = processor.probe_metadata(&path)
+        .map_err(|e| format!("音声メタデータの取得に失敗しました: {}", e))?;
+
+    Ok(AudioMetadataResponse {
+        duration: metadata.duration_seconds,
+        sample_rate: metadata.sample_rate,
+    })
+}
+
+#[tauri::command]
+async fn update_language_setting(language: String, state: State<'_, AppState>) -> Result<(), String> {
+    let mut config = state.config.lock().map_err(|_| "設定の更新に失敗しました")?;
+    config.whisper.language = language;
+    config.save().map_err(|e| format!("設定の保存に失敗しました: {}", e))?;
+
+    // Whisperエンジンをリセット
+    let mut engine = state.whisper_engine.lock().map_err(|_| "エンジンのリセットに失敗しました")?;
+    *engine = None;
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn start_transcription(
+    audio_path: String,
+    language: String,
+    translate_to_english: bool,
+    state: State<'_, AppState>,
+) -> Result<TranscriptionResult, String> {
+    let config_snapshot = {
+        let config = state.config.lock().map_err(|_| "設定の読み込みに失敗しました")?;
+        config.clone()
     };
 
-    let current_path = config_snapshot.whisper.model_path.clone();
+    // 音声ファイルの読み込み
+    let mut processor = AudioProcessor::new(&config_snapshot)
+        .map_err(|e| format!("オーディオ処理の初期化に失敗しました: {}", e))?;
 
-    let mut items = Vec::new();
+    let audio_data = processor
+        .load_audio_file(&audio_path)
+        .map_err(|e| format!("音声読み込みエラー: {}", e))?;
 
-    for model in MODEL_CATALOG.iter() {
-        let path_buf = PathBuf::from(&models_dir).join(model.filename);
-        let path_str = path_buf.to_string_lossy().to_string();
-        let downloaded = Path::new(&path_str).exists();
-        let current = is_current_model(&current_path, &path_str, model.filename);
+    // Whisperエンジンの初期化
+    {
+        let engine_guard = state.whisper_engine.lock()
+            .map_err(|_| "Whisperエンジンのロックに失敗しました")?;
 
-        items.push(ModelInfo {
-            id: model.id.to_string(),
-            label: model.label.to_string(),
-            filename: model.filename.to_string(),
-            path: path_str,
+        if engine_guard.is_none() {
+            drop(engine_guard);
+
+            let engine = WhisperEngine::new(&config_snapshot.whisper.model_path, &config_snapshot)
+                .map_err(|e| format!("モデルのロードに失敗しました: {}", e))?;
+
+            let mut guard = state.whisper_engine.lock()
+                .map_err(|_| "Whisperエンジンの設定に失敗しました")?;
+            *guard = Some(engine);
+        }
+    }
+
+    // 文字起こし実行
+    let segments = {
+        let engine_guard = state.whisper_engine.lock()
+            .map_err(|_| "Whisperエンジンのロックに失敗しました")?;
+
+        match engine_guard.as_ref() {
+            Some(engine) => {
+                let lang_opt = match language.trim() {
+                    "" | "auto" => None,
+                    other => Some(other),
+                };
+                engine
+                    .transcribe_with_timestamps(&audio_data, translate_to_english, lang_opt)
+                    .map_err(|e| format!("文字起こしに失敗しました: {}", e))
+            }
+            None => Err("Whisperエンジンが初期化されていません".to_string()),
+        }?
+    };
+
+    let text = if segments.is_empty() {
+        "(音声を認識できませんでした)".to_string()
+    } else {
+        segments
+            .iter()
+            .map(|segment| {
+                format!(
+                    "[{} --> {}] {}",
+                    format_timestamp_ms(segment.start_time_ms),
+                    format_timestamp_ms(segment.end_time_ms),
+                    segment.text
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    Ok(TranscriptionResult {
+        text,
+        segments: segments.len(),
+    })
+}
+
+#[tauri::command]
+fn copy_to_clipboard(text: String, app: tauri::AppHandle) -> Result<(), String> {
+    let mut clipboard = app.clipboard_manager();
+    clipboard
+        .write_text(text)
+        .map_err(|e| format!("クリップボードへのコピーに失敗しました: {}", e))
+}
+
+#[tauri::command]
+fn get_available_models(state: State<'_, AppState>) -> Result<Vec<ModelInfo>, String> {
+    let config = state.config.lock().map_err(|_| "設定の読み込みに失敗しました")?;
+    let models_dir = &config.paths.models_dir;
+    let current_path = &config.whisper.model_path;
+
+    let mut models = Vec::new();
+    for model_def in MODEL_CATALOG {
+        let model_path_buf = PathBuf::from(models_dir).join(model_def.filename);
+        let downloaded = model_path_buf.exists();
+        let current = current_path.contains(model_def.filename);
+
+        let path = if current {
+            current_path.clone()
+        } else {
+            model_path_buf.to_string_lossy().to_string()
+        };
+
+        models.push(ModelInfo {
+            id: model_def.id.to_string(),
+            label: model_def.label.to_string(),
+            filename: model_def.filename.to_string(),
+            path,
             downloaded,
             current,
-            size_mb: model.size_mb,
+            size_mb: model_def.size_mb,
         });
     }
 
-    Ok(items)
+    Ok(models)
 }
 
 #[tauri::command]
-async fn select_model(
-    app_handle: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-    model_id: String,
-) -> Result<(), String> {
-    let model_definition = get_model_definition(&model_id)
-        .ok_or_else(|| format!("未知のモデルIDです: {}", model_id))?;
+fn select_model(model_id: String, state: State<'_, AppState>) -> Result<String, String> {
+    let model_def = MODEL_CATALOG
+        .iter()
+        .find(|m| m.id == model_id)
+        .ok_or_else(|| format!("未知のモデルID: {}", model_id))?;
 
-    let app_state = state.inner();
-    let config_handle = app_state.config.clone();
-    let whisper_engine_handle = app_state.whisper_engine.clone();
+    let mut config = state.config.lock().map_err(|_| "設定の更新に失敗しました")?;
+    let model_path = PathBuf::from(&config.paths.models_dir).join(model_def.filename);
 
-    let (models_dir, current_path) = match config_handle.lock() {
-        Ok(guard) => (
-            guard.paths.models_dir.clone(),
-            guard.whisper.model_path.clone(),
-        ),
-        Err(_) => {
-            return Err("設定の読み込みに失敗しました".into());
-        }
-    };
-
-    let target_path = PathBuf::from(&models_dir).join(model_definition.filename);
-    let target_path_str = target_path.to_string_lossy().to_string();
-
-    if is_current_model(&current_path, &target_path_str, model_definition.filename) {
-        return Ok(());
+    if !model_path.exists() {
+        return Err(format!("モデルファイルが見つかりません: {}", model_def.filename));
     }
 
-    let needs_download = !target_path.exists();
+    config.whisper.model_path = model_path.to_string_lossy().to_string();
+    config.whisper.default_model = model_id.clone();
+    config.save().map_err(|e| format!("設定の保存に失敗しました: {}", e))?;
 
-    if needs_download {
-        let download_app = app_handle.clone();
-        let download_id = model_id.clone();
-        let download_label = model_definition.label.to_string();
-        let download_url = model_definition.url.to_string();
-        let download_path = target_path.clone();
+    // Whisperエンジンをリセット
+    let mut engine = state.whisper_engine.lock().map_err(|_| "エンジンのリセットに失敗しました")?;
+    *engine = None;
 
-        tauri::async_runtime::spawn_blocking(move || {
-            download_model_file(
-                &download_app,
-                &download_id,
-                &download_label,
-                &download_url,
-                &download_path,
-            )
-        })
-        .await
-        .map_err(|err| format!("モデルダウンロードの実行に失敗しました: {}", err))?
-        .map_err(|err| err.to_string())?;
-    }
-
-    {
-        let mut config_guard = config_handle
-            .lock()
-            .map_err(|_| "設定の更新に失敗しました".to_string())?;
-        config_guard.whisper.default_model = model_id.clone();
-        config_guard.whisper.model_path = target_path_str.clone();
-        config_guard
-            .save()
-            .map_err(|err| format!("設定ファイルの保存に失敗しました: {}", err))?;
-    }
-
-    {
-        let mut engine_guard = whisper_engine_handle
-            .lock()
-            .map_err(|_| "Whisperエンジンのリセットに失敗しました".to_string())?;
-        *engine_guard = None;
-    }
-
-    let _ = app_handle.emit_all(
-        "model-selected",
-        ModelSelectedPayload {
-            model_id,
-            model_path: target_path_str,
-        },
-    );
-
-    Ok(())
-}
-
-fn download_model_file(
-    app: &tauri::AppHandle,
-    model_id: &str,
-    label: &str,
-    url: &str,
-    destination: &Path,
-) -> anyhow::Result<()> {
-    let _ = app.emit_all(
-        "model-download",
-        ModelDownloadPayload {
-            model_id: model_id.to_string(),
-            status: "started".into(),
-            message: format!("{} をダウンロードしています", label),
-            progress: Some(0.0),
-        },
-    );
-
-    let download_result = (|| -> anyhow::Result<()> {
-        if let Some(parent) = destination.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        let client = reqwest::blocking::Client::new();
-        let mut response = client.get(url).send()?.error_for_status()?;
-        let total_size = response.content_length();
-        let mut file = std::fs::File::create(destination)?;
-        let mut buffer = [0u8; 8192];
-        let mut downloaded: u64 = 0;
-        let mut last_reported = 0.0;
-        let mut emitted_unknown_progress = false;
-
-        use std::io::{Read, Write};
-
-        loop {
-            let read_bytes = response.read(&mut buffer)?;
-            if read_bytes == 0 {
-                break;
-            }
-
-            file.write_all(&buffer[..read_bytes])?;
-            downloaded += read_bytes as u64;
-
-            if let Some(total) = total_size {
-                if total > 0 {
-                    let progress = (downloaded as f64 / total as f64) * 100.0;
-                    if progress - last_reported >= 1.0 || progress >= 100.0 {
-                        let clamped = progress.min(100.0);
-                        let _ = app.emit_all(
-                            "model-download",
-                            ModelDownloadPayload {
-                                model_id: model_id.to_string(),
-                                status: "progress".into(),
-                                message: format!("{} をダウンロード中 ({:.0}%)", label, clamped),
-                                progress: Some(clamped),
-                            },
-                        );
-                        last_reported = progress;
-                    }
-                }
-            } else if !emitted_unknown_progress {
-                let _ = app.emit_all(
-                    "model-download",
-                    ModelDownloadPayload {
-                        model_id: model_id.to_string(),
-                        status: "progress".into(),
-                        message: format!("{} をダウンロード中", label),
-                        progress: None,
-                    },
-                );
-                emitted_unknown_progress = true;
-            }
-        }
-
-        file.flush()?;
-
-        Ok(())
-    })();
-
-    match download_result {
-        Ok(()) => {
-            let _ = app.emit_all(
-                "model-download",
-                ModelDownloadPayload {
-                    model_id: model_id.to_string(),
-                    status: "completed".into(),
-                    message: format!("{} のダウンロードが完了しました", label),
-                    progress: Some(100.0),
-                },
-            );
-            Ok(())
-        }
-        Err(err) => {
-            let _ = std::fs::remove_file(destination);
-            let _ = app.emit_all(
-                "model-download",
-                ModelDownloadPayload {
-                    model_id: model_id.to_string(),
-                    status: "error".into(),
-                    message: format!("{} のダウンロードに失敗しました: {}", label, err),
-                    progress: None,
-                },
-            );
-            Err(err)
-        }
-    }
+    Ok(format!("モデルを {} に切り替えました", model_def.label))
 }
 
 #[tauri::command]
-async fn transcribe_audio(
-    app_handle: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-    path: String,
-) -> Result<(), String> {
-    if path.is_empty() {
-        return Err("音声ファイルが選択されていません".into());
+fn select_model_file() -> Result<String, String> {
+    use tauri::api::dialog::blocking::FileDialogBuilder;
+
+    let file_path = FileDialogBuilder::new()
+        .add_filter("Whisper Models", &["bin"])
+        .pick_file();
+
+    match file_path {
+        Some(path) => Ok(path.to_string_lossy().to_string()),
+        None => Err("ファイルが選択されませんでした".to_string()),
     }
-
-    let app_state = state.inner();
-    let whisper_engine = app_state.whisper_engine.clone();
-    let config_state = app_state.config.clone();
-    let app = app_handle.clone();
-
-    let config_snapshot = match config_state.lock() {
-        Ok(guard) => guard.clone(),
-        Err(_) => {
-            return Err("設定の読み込みに失敗しました".into());
-        }
-    };
-
-    tauri::async_runtime::spawn_blocking(move || {
-        let _ = app.emit_all(
-            "transcription-started",
-            StatusPayload {
-                message: "文字起こしを開始します".into(),
-            },
-        );
-
-        let mut processor = match AudioProcessor::new(&config_snapshot) {
-            Ok(processor) => processor,
-            Err(err) => {
-                let _ = app.emit_all(
-                    "transcription-error",
-                    StatusPayload {
-                        message: format!("オーディオ処理の初期化に失敗しました: {}", err),
-                    },
-                );
-                return;
-            }
-        };
-
-        let audio_data = match processor.load_audio_file(&path) {
-            Ok(data) => data,
-            Err(err) => {
-                let _ = app.emit_all(
-                    "transcription-error",
-                    StatusPayload {
-                        message: format!("音声読み込みエラー: {}", err),
-                    },
-                );
-                return;
-            }
-        };
-
-        let mut engine_guard = match whisper_engine.lock() {
-            Ok(guard) => guard,
-            Err(_) => {
-                let _ = app.emit_all(
-                    "transcription-error",
-                    StatusPayload {
-                        message: "Whisperエンジンの準備に失敗しました".into(),
-                    },
-                );
-                return;
-            }
-        };
-
-        if engine_guard.is_none() {
-            let _ = app.emit_all(
-                "transcription-progress",
-                StatusPayload {
-                    message: "モデルをロードしています".into(),
-                },
-            );
-
-            match WhisperEngine::new(&config_snapshot.whisper.model_path, &config_snapshot) {
-                Ok(engine) => {
-                    *engine_guard = Some(engine);
-                    let _ = app.emit_all(
-                        "transcription-progress",
-                        StatusPayload {
-                            message: format!(
-                                "モデルをロードしました: {}",
-                                config_snapshot.whisper.model_path
-                            ),
-                        },
-                    );
-                }
-                Err(err) => {
-                    let _ = app.emit_all(
-                        "transcription-error",
-                        StatusPayload {
-                            message: format!("モデルのロードに失敗しました: {}", err),
-                        },
-                    );
-                    return;
-                }
-            }
-        }
-
-        let result = match engine_guard.as_ref() {
-            Some(engine) => match engine.transcribe(&audio_data) {
-                Ok(text) => text,
-                Err(err) => {
-                    let _ = app.emit_all(
-                        "transcription-error",
-                        StatusPayload {
-                            message: format!("文字起こしに失敗しました: {}", err),
-                        },
-                    );
-                    return;
-                }
-            },
-            None => {
-                let _ = app.emit_all(
-                    "transcription-error",
-                    StatusPayload {
-                        message: "Whisperエンジンが初期化されませんでした".into(),
-                    },
-                );
-                return;
-            }
-        };
-
-        let _ = app.emit_all(
-            "transcription-completed",
-            CompletedPayload {
-                text: result,
-                source_path: path,
-            },
-        );
-    });
-
-    Ok(())
 }
 
 fn main() {
-    let app_state = match AppState::initialize() {
-        Ok(state) => state,
-        Err(err) => {
-            eprintln!("アプリケーション初期化エラー: {}", err);
-            std::process::exit(1);
-        }
-    };
+    let app_state = AppState::new().expect("アプリケーションの初期化に失敗しました");
 
     tauri::Builder::default()
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
-            transcribe_audio,
-            list_models,
-            select_model
+            select_audio_file,
+            load_audio_metadata,
+            update_language_setting,
+            start_transcription,
+            copy_to_clipboard,
+            get_available_models,
+            select_model,
+            select_model_file
         ])
         .run(tauri::generate_context!())
-        .expect("failed to run Whisper GUI app");
+        .expect("Tauriアプリケーションの実行に失敗しました");
 }
 
-fn is_current_model(current_path: &str, candidate_path: &str, filename: &str) -> bool {
-    if current_path.is_empty() {
-        return false;
-    }
-
-    let current = Path::new(current_path);
-    let candidate = Path::new(candidate_path);
-
-    if current == candidate {
-        return true;
-    }
-
-    if let Some(curr) = current.file_name() {
-        if curr == std::ffi::OsStr::new(filename) {
-            return true;
-        }
-    }
-
-    false
+fn format_timestamp_ms(ms: u64) -> String {
+    let total_seconds = ms / 1000;
+    let milliseconds = ms % 1000;
+    let seconds = total_seconds % 60;
+    let minutes = (total_seconds / 60) % 60;
+    let hours = total_seconds / 3600;
+    format!(
+        "{:02}:{:02}:{:02}.{:03}",
+        hours, minutes, seconds, milliseconds
+    )
 }

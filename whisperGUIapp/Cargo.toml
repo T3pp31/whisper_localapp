@@ -2,22 +2,30 @@
 name = "whisperGUIapp"
 version = "0.1.0"
 edition = "2021"
-build = "build.rs"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "1.5", features = [] }
 
 [dependencies]
 anyhow = "1.0"
-cpal = "0.15"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 symphonia = { version = "0.5", features = ["all-codecs", "all-formats"] }
 rubato = "0.14"
-tauri = { version = "1.5", features = ["dialog-open", "dialog-save", "window-create", "fs-write-file", "path-all"] }
 toml = "0.8"
 whisper-rs = "0.11"
 reqwest = { version = "0.11", features = ["blocking"] }
+tauri = { version = "1.5", features = [ "fs-write-file", "dialog-open", "dialog-ask", "fs-read-file", "fs-create-dir", "dialog-confirm", "fs-copy-file", "dialog-message", "shell-open", "path-all", "fs-rename-file", "clipboard-all", "fs-remove-dir", "fs-remove-file", "fs-exists", "dialog-save"] }
+tokio = { version = "1.0", features = ["full"] }
+crossbeam-channel = "0.5"
+chrono = { version = "0.4", features = ["clock"] }
 
-[build-dependencies]
-tauri-build = "1.5"
+[target.'cfg(target_os = "windows")'.dependencies]
+rfd = { version = "0.12", default-features = false }
 
 [profile.release]
 opt-level = 3

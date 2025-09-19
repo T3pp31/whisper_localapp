@@ -1,13 +1,10 @@
 use crate::config::Config;
 use anyhow::Result;
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, Stream};
 use rubato::{
     Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
 use std::fs::File;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
 use symphonia::core::audio::{AudioBufferRef, Signal};
 use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
 use symphonia::core::formats::FormatOptions;
@@ -15,20 +12,103 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
+pub struct AudioMetadata {
+    pub duration_seconds: f32,
+    pub sample_rate: u32,
+}
+
 pub struct AudioProcessor {
     config: Config,
-    recording_device: Option<Device>,
-    recording_stream: Option<Stream>,
-    recorded_samples: Arc<Mutex<Vec<f32>>>,
 }
 
 impl AudioProcessor {
     pub fn new(config: &Config) -> Result<Self> {
         Ok(Self {
             config: config.clone(),
-            recording_device: None,
-            recording_stream: None,
-            recorded_samples: Arc::new(Mutex::new(Vec::new())),
+        })
+    }
+
+    pub fn probe_metadata(&self, file_path: &str) -> Result<AudioMetadata> {
+        let path = Path::new(file_path);
+        if !path.exists() {
+            return Err(anyhow::anyhow!(
+                "音声ファイルが見つかりません: {}",
+                file_path
+            ));
+        }
+
+        let file = File::open(path)?;
+        let mss = MediaSourceStream::new(Box::new(file), Default::default());
+
+        let mut hint = Hint::new();
+        if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
+            hint.with_extension(extension);
+        }
+
+        let meta_opts: MetadataOptions = Default::default();
+        let fmt_opts: FormatOptions = Default::default();
+
+        let probed = symphonia::default::get_probe().format(&hint, mss, &fmt_opts, &meta_opts)?;
+
+        let mut format = probed.format;
+
+        let track = format
+            .tracks()
+            .iter()
+            .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+            .ok_or_else(|| anyhow::anyhow!("音声トラックが見つかりません"))?;
+
+        let track_id = track.id;
+        let sample_rate = track
+            .codec_params
+            .sample_rate
+            .ok_or_else(|| anyhow::anyhow!("サンプリングレートが取得できません"))?
+            as u32;
+        let time_base = track.codec_params.time_base;
+
+        let mut total_duration = 0u64;
+        let mut total_frames = 0u64;
+
+        loop {
+            let packet = match format.next_packet() {
+                Ok(packet) => packet,
+                Err(symphonia::core::errors::Error::ResetRequired) => {
+                    break;
+                }
+                Err(symphonia::core::errors::Error::IoError(ref err))
+                    if err.kind() == std::io::ErrorKind::UnexpectedEof =>
+                {
+                    break;
+                }
+                Err(err) => {
+                    return Err(anyhow::anyhow!("パケット読み込みエラー: {}", err));
+                }
+            };
+
+            if packet.track_id() != track_id {
+                continue;
+            }
+
+            total_duration = total_duration.saturating_add(packet.dur());
+            total_frames = total_frames.saturating_add(packet.block_dur());
+        }
+
+        if total_duration == 0 && total_frames == 0 {
+            return Err(anyhow::anyhow!("音声データが空です"));
+        }
+
+        let duration_seconds = if let Some(time_base) = time_base {
+            let time = time_base.calc_time(total_duration);
+            (time.seconds as f64 + time.frac) as f32
+        } else if total_frames > 0 {
+            (total_frames as f64 / sample_rate as f64) as f32
+        } else {
+            0.0
+        };
+
+        Ok(AudioMetadata {
+            duration_seconds,
+            sample_rate,
         })
     }
 
@@ -102,6 +182,7 @@ impl AudioProcessor {
 
             match decoder.decode(&packet) {
                 Ok(audio_buf) => {
+                    // 各フレームで全チャネルを平均し、モノラルに変換して蓄積
                     self.extract_samples_from_buffer(&audio_buf, &mut samples)?;
                 }
                 Err(symphonia::core::errors::Error::IoError(ref err))
@@ -118,20 +199,15 @@ impl AudioProcessor {
             return Err(anyhow::anyhow!("音声データが空です"));
         }
 
-        // サンプリングレートを取得
-        let original_sample_rate = codec_params
+        // サンプリングレートを取得（デコーダが提供する値を優先）
+        let original_sample_rate = decoder
+            .codec_params()
             .sample_rate
-            .ok_or_else(|| anyhow::anyhow!("サンプリングレートが取得できません"))?
-            as f64;
+            .or(codec_params.sample_rate)
+            .ok_or_else(|| anyhow::anyhow!("サンプリングレートが取得できません"))? as f64;
 
-        // チャンネル数を取得
-        let channels = codec_params
-            .channels
-            .ok_or_else(|| anyhow::anyhow!("チャンネル数が取得できません"))?
-            .count();
-
-        // モノラルに変換
-        let mono_samples = self.convert_to_mono(samples, channels);
+        // 既にモノラルへ変換済み
+        let mono_samples = samples;
 
         // 16kHzにリサンプル
         let target_sample_rate = self.config.audio.sample_rate as f64;
@@ -158,44 +234,39 @@ impl AudioProcessor {
     ) -> Result<()> {
         match audio_buf {
             AudioBufferRef::F32(buf) => {
-                for &sample in buf.chan(0) {
-                    samples.push(sample);
-                }
-                for ch in 1..buf.spec().channels.count() {
-                    for (i, &sample) in buf.chan(ch).iter().enumerate() {
-                        if i < samples.len() {
-                            samples[i] += sample;
-                        }
+                let ch = buf.spec().channels.count();
+                let frames = buf.frames();
+                for i in 0..frames {
+                    let mut sum = 0.0f32;
+                    for c in 0..ch {
+                        sum += buf.chan(c)[i];
                     }
+                    samples.push(sum / ch as f32);
                 }
             }
             AudioBufferRef::S32(buf) => {
-                for &sample in buf.chan(0) {
-                    samples.push(sample as f32 / i32::MAX as f32);
-                }
-                for ch in 1..buf.spec().channels.count() {
-                    for (i, &sample) in buf.chan(ch).iter().enumerate() {
-                        if i < samples.len() {
-                            samples[i] += sample as f32 / i32::MAX as f32;
-                        }
+                let ch = buf.spec().channels.count();
+                let frames = buf.frames();
+                for i in 0..frames {
+                    let mut sum = 0.0f32;
+                    for c in 0..ch {
+                        sum += buf.chan(c)[i] as f32 / i32::MAX as f32;
                     }
+                    samples.push(sum / ch as f32);
                 }
             }
             AudioBufferRef::S16(buf) => {
-                for &sample in buf.chan(0) {
-                    samples.push(sample as f32 / i16::MAX as f32);
-                }
-                for ch in 1..buf.spec().channels.count() {
-                    for (i, &sample) in buf.chan(ch).iter().enumerate() {
-                        if i < samples.len() {
-                            samples[i] += sample as f32 / i16::MAX as f32;
-                        }
+                let ch = buf.spec().channels.count();
+                let frames = buf.frames();
+                for i in 0..frames {
+                    let mut sum = 0.0f32;
+                    for c in 0..ch {
+                        sum += buf.chan(c)[i] as f32 / i16::MAX as f32;
                     }
+                    samples.push(sum / ch as f32);
                 }
             }
-            _ => {
-                return Err(anyhow::anyhow!("サポートされていない音声フォーマットです"));
-            }
+            _ => return Err(anyhow::anyhow!("サポートされていない音声フォーマットです")),
         }
         Ok(())
     }
@@ -253,104 +324,5 @@ impl AudioProcessor {
         let output_channels = resampler.process(&input_channels, None)?;
 
         Ok(output_channels[0].clone())
-    }
-
-    pub fn start_recording(&mut self) -> Result<()> {
-        let host = cpal::default_host();
-        let device = host
-            .default_input_device()
-            .ok_or_else(|| anyhow::anyhow!("デフォルト入力デバイスが見つかりません"))?;
-
-        let config = device.default_input_config()?;
-
-        println!("録音デバイス: {}", device.name()?);
-        println!("録音設定: {:?}", config);
-
-        let channels = config.channels();
-
-        let recorded_samples = self.recorded_samples.clone();
-
-        let stream = match config.sample_format() {
-            cpal::SampleFormat::F32 => {
-                device.build_input_stream(
-                    &config.into(),
-                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                        let mut samples = recorded_samples.lock().unwrap();
-
-                        // モノラルに変換して追加
-                        if channels == 1 {
-                            samples.extend_from_slice(data);
-                        } else {
-                            for chunk in data.chunks(channels as usize) {
-                                let mono_sample = chunk.iter().sum::<f32>() / channels as f32;
-                                samples.push(mono_sample);
-                            }
-                        }
-                    },
-                    |err| eprintln!("録音エラー: {}", err),
-                    None,
-                )?
-            }
-            cpal::SampleFormat::I16 => device.build_input_stream(
-                &config.into(),
-                move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                    let mut samples = recorded_samples.lock().unwrap();
-
-                    if channels == 1 {
-                        for &sample in data {
-                            samples.push(sample as f32 / i16::MAX as f32);
-                        }
-                    } else {
-                        for chunk in data.chunks(channels as usize) {
-                            let mono_sample: f32 = chunk
-                                .iter()
-                                .map(|&s| s as f32 / i16::MAX as f32)
-                                .sum::<f32>()
-                                / channels as f32;
-                            samples.push(mono_sample);
-                        }
-                    }
-                },
-                |err| eprintln!("録音エラー: {}", err),
-                None,
-            )?,
-            format => {
-                return Err(anyhow::anyhow!(
-                    "サポートされていない音声フォーマット: {:?}",
-                    format
-                ));
-            }
-        };
-
-        stream.play()?;
-
-        self.recording_device = Some(device);
-        self.recording_stream = Some(stream);
-
-        println!("録音を開始しました");
-        Ok(())
-    }
-
-    pub fn stop_recording(&mut self) -> Result<Vec<f32>> {
-        if let Some(stream) = self.recording_stream.take() {
-            stream.pause()?;
-            drop(stream);
-        }
-
-        self.recording_device = None;
-
-        let mut samples = self.recorded_samples.lock().unwrap();
-        let recorded_data = samples.clone();
-        samples.clear();
-
-        println!("録音を停止しました。{} samples収録", recorded_data.len());
-
-        // 16kHzにリサンプル（必要に応じて）
-        // 現在は簡略化のため、そのまま返す
-        Ok(recorded_data)
-    }
-
-    pub fn is_recording(&self) -> bool {
-        self.recording_stream.is_some()
     }
 }
