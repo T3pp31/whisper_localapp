@@ -54,7 +54,10 @@
         "icons/icon.ico"
       ],
       "identifier": "com.whisper.gui",
-      "targets": "all"
+      "targets": ["nsis"],
+      "resources": [
+        "models/README.txt"
+      ]
     },
     "security": {
       "csp": null
@@ -67,10 +70,10 @@
         "fullscreen": false,
         "resizable": true,
         "title": "Whisper GUI App",
-        "width": 1000,
-        "height": 700,
-        "minWidth": 800,
-        "minHeight": 600
+        "width": 1280,
+        "height": 820,
+        "minWidth": 1100,
+        "minHeight": 720
       }
     ]
   }

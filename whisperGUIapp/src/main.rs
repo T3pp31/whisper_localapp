@@ -10,14 +10,14 @@ mod whisper;
 
 use audio::{AudioProcessor};
 use config::Config;
-use models::{ModelDefinition, MODEL_CATALOG};
+use models::MODEL_CATALOG;
 use whisper::WhisperEngine;
 
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tauri::{ClipboardManager, State};
+use tauri::{ClipboardManager, Manager, State};
+use std::io::{Read, Write};
 
 #[derive(Clone)]
 struct AppState {
@@ -103,8 +103,24 @@ async fn prepare_preview_wav(path: String, state: State<'_, AppState>) -> Result
     let mut processor = AudioProcessor::new(&config)
         .map_err(|e| format!("オーディオ処理の初期化に失敗しました: {}", e))?;
 
-    let preview_path = PathBuf::from(&config.paths.temp_dir).join("preview.wav");
-    // 古いファイルを消す
+    // temp_dir が相対パスの場合でも、絶対パスに解決してから使用する
+    let mut temp_dir = PathBuf::from(&config.paths.temp_dir);
+    if temp_dir.is_relative() {
+        // 実行ディレクトリを基準に絶対パスへ（失敗時はカレントディレクトリ）
+        let base = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        temp_dir = base.join(temp_dir);
+    }
+
+    // temp ディレクトリを確実に作成
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|e| format!("一時ディレクトリの作成に失敗しました: {}", e))?;
+
+    let preview_path = temp_dir.join("preview.wav");
+
+    // 既存のプレビューを削除
     if preview_path.exists() {
         let _ = std::fs::remove_file(&preview_path);
     }
@@ -113,6 +129,7 @@ async fn prepare_preview_wav(path: String, state: State<'_, AppState>) -> Result
         .decode_to_wav_file(&path, &preview_path.to_string_lossy())
         .map_err(|e| format!("プレビューWAV生成に失敗しました: {}", e))?;
 
+    // 返却するパスは文字列の絶対パス
     Ok(preview_path.to_string_lossy().to_string())
 }
 
@@ -214,13 +231,179 @@ async fn start_transcription(
 }
 
 #[tauri::command]
-fn copy_to_clipboard(text: String, app: tauri::AppHandle) -> Result<(), String> {
+    fn copy_to_clipboard(text: String, app: tauri::AppHandle) -> Result<(), String> {
     let mut clipboard = app.clipboard_manager();
     clipboard
         .write_text(text)
         .map_err(|e| format!("クリップボードへのコピーに失敗しました: {}", e))
 }
 
+#[derive(Serialize, Clone)]
+struct DownloadProgressPayload {
+    id: String,
+    filename: String,
+    downloaded: u64,
+    total: Option<u64>,
+    phase: String,     // start | progress | done | error
+    message: Option<String>,
+}
+
+fn emit_progress(app: &tauri::AppHandle, payload: &DownloadProgressPayload) {
+    let _ = app.emit_all("download-progress", payload.clone());
+}
+
+#[tauri::command]
+async fn download_model(model_id: String, app: tauri::AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+    let (url, filename) = {
+        let def = models::get_model_definition(&model_id)
+            .ok_or_else(|| format!("未知のモデルID: {}", model_id))?;
+        (def.url.to_string(), def.filename.to_string())
+    };
+
+    let models_dir = {
+        let cfg = state
+            .config
+            .lock()
+            .map_err(|_| "設定の読み込みに失敗しました")?;
+        std::path::PathBuf::from(&cfg.paths.models_dir)
+    };
+    std::fs::create_dir_all(&models_dir)
+        .map_err(|e| format!("models ディレクトリの作成に失敗しました: {}", e))?;
+
+    let dest = models_dir.join(&filename);
+    if dest.exists() {
+        return Ok(format!("{} は既に存在します", filename));
+    }
+
+    // ブロッキングダウンロードを別スレッドで実行
+    let dest_cloned = dest.clone();
+    let url_cloned = url.clone();
+    let app_cloned = app.clone();
+    let model_id_cloned = model_id.clone();
+    let filename_cloned = filename.clone();
+    tokio::task::spawn_blocking(move || {
+        download_to_file_with_progress(&app_cloned, &model_id_cloned, &filename_cloned, &url_cloned, &dest_cloned)
+    })
+    .await
+    .map_err(|e| format!("ダウンロードスレッドの実行に失敗しました: {}", e))?
+    .map_err(|e| format!("ダウンロードに失敗しました: {}", e))?;
+
+    Ok(format!("{} をダウンロードしました", filename))
+}
+
+#[tauri::command]
+async fn download_all_models(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let models_dir = {
+        let cfg = state
+            .config
+            .lock()
+            .map_err(|_| "設定の読み込みに失敗しました")?;
+        std::path::PathBuf::from(&cfg.paths.models_dir)
+    };
+    std::fs::create_dir_all(&models_dir)
+        .map_err(|e| format!("models ディレクトリの作成に失敗しました: {}", e))?;
+
+    let mut downloaded = Vec::new();
+    for def in MODEL_CATALOG {
+        let dest = models_dir.join(def.filename);
+        if dest.exists() {
+            continue;
+        }
+        let url = def.url.to_string();
+        let dest_cloned = dest.clone();
+        let app_cloned = app.clone();
+        let id = def.id.to_string();
+        let filename = def.filename.to_string();
+        tokio::task::spawn_blocking(move || download_to_file_with_progress(&app_cloned, &id, &filename, &url, &dest_cloned))
+            .await
+            .map_err(|e| format!("ダウンロードスレッドの実行に失敗しました: {}", e))?
+            .map_err(|e| format!("{} のダウンロードに失敗しました: {}", def.filename, e))?;
+        downloaded.push(def.filename.to_string());
+    }
+    Ok(downloaded)
+}
+
+fn download_to_file_with_progress(
+    app: &tauri::AppHandle,
+    model_id: &str,
+    filename: &str,
+    url: &str,
+    dest: &std::path::Path,
+) -> anyhow::Result<()> {
+    let client = reqwest::blocking::Client::builder().build()?;
+    let mut resp = client.get(url).send()?;
+    if !resp.status().is_success() {
+        let msg = format!("HTTP {}", resp.status());
+        emit_progress(
+            app,
+            &DownloadProgressPayload {
+                id: model_id.to_string(),
+                filename: filename.to_string(),
+                downloaded: 0,
+                total: None,
+                phase: "error".into(),
+                message: Some(msg.clone()),
+            },
+        );
+        return Err(anyhow::anyhow!(msg));
+    }
+
+    let total = resp.content_length();
+    emit_progress(
+        app,
+        &DownloadProgressPayload {
+            id: model_id.to_string(),
+            filename: filename.to_string(),
+            downloaded: 0,
+            total,
+            phase: "start".into(),
+            message: None,
+        },
+    );
+
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp = dest.with_extension("part");
+    let mut file = std::fs::File::create(&tmp)?;
+    let mut buf = [0u8; 1024 * 1024];
+    let mut downloaded: u64 = 0;
+
+    loop {
+        let n = resp.read(&mut buf)? as u64;
+        if n == 0 {
+            break;
+        }
+        file.write_all(&buf[..(n as usize)])?;
+        downloaded = downloaded.saturating_add(n);
+        emit_progress(
+            app,
+            &DownloadProgressPayload {
+                id: model_id.to_string(),
+                filename: filename.to_string(),
+                downloaded,
+                total,
+                phase: "progress".into(),
+                message: None,
+            },
+        );
+    }
+    drop(file);
+    std::fs::rename(&tmp, dest)?;
+
+    emit_progress(
+        app,
+        &DownloadProgressPayload {
+            id: model_id.to_string(),
+            filename: filename.to_string(),
+            downloaded: total.unwrap_or(downloaded),
+            total,
+            phase: "done".into(),
+            message: None,
+        },
+    );
+    Ok(())
+}
 #[tauri::command]
 fn get_available_models(state: State<'_, AppState>) -> Result<Vec<ModelInfo>, String> {
     let config = state.config.lock().map_err(|_| "設定の読み込みに失敗しました")?;
@@ -303,6 +486,92 @@ fn main() {
 
     tauri::Builder::default()
         .manage(app_state)
+        .setup(|app| {
+            // ユーザー領域の models ディレクトリへリソースから同梱モデルを展開
+            let state = app.state::<AppState>();
+            let mut config_guard = state
+                .config
+                .lock()
+                .map_err(|_| "設定のロックに失敗しました")?;
+
+            // 既定の models_dir をユーザー領域へ移行（例: %LOCALAPPDATA%/whisperGUIapp/models）
+            let user_models_dir = dirs_next::data_local_dir()
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+                .join("whisperGUIapp")
+                .join("models");
+
+            if config_guard.paths.models_dir == "models" {
+                config_guard.paths.models_dir = user_models_dir.to_string_lossy().to_string();
+            }
+            // 確実に作成
+            let _ = std::fs::create_dir_all(&config_guard.paths.models_dir);
+
+            // リソースディレクトリ内の models を探す（複数パターンを試す）
+            let mut resource_models_dir: Option<std::path::PathBuf> = None;
+            if let Some(p) = app.path_resolver().resolve_resource("models") {
+                if p.exists() { resource_models_dir = Some(p); }
+            }
+            if resource_models_dir.is_none() {
+                if let Some(p) = app.path_resolver().resolve_resource("resources/models") {
+                    if p.exists() { resource_models_dir = Some(p); }
+                }
+            }
+            if resource_models_dir.is_none() {
+                // フォールバック: 実行ファイルと同階層の resources/models
+                if let Ok(exe) = std::env::current_exe() {
+                    if let Some(dir) = exe.parent() {
+                        let cand = dir.join("resources").join("models");
+                        if cand.exists() { resource_models_dir = Some(cand); }
+                    }
+                }
+            }
+
+            if let Some(src_models) = resource_models_dir {
+                if src_models.exists() {
+                    if let Ok(entries) = std::fs::read_dir(&src_models) {
+                        for e in entries.flatten() {
+                            if let Ok(ft) = e.file_type() {
+                                if ft.is_file() {
+                                    let file_name = e.file_name();
+                                    let dest = std::path::Path::new(&config_guard.paths.models_dir).join(file_name);
+                                    if !dest.exists() {
+                                        let _ = std::fs::copy(e.path(), &dest);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // モデルパスが存在しない場合は、新しい models_dir にある既定モデルへ切替
+            if !std::path::Path::new(&config_guard.whisper.model_path).exists() {
+                let default_id = config_guard.whisper.default_model.clone();
+                let mut candidate = None;
+                if let Some(def) = crate::models::get_model_definition(&default_id) {
+                    let p = std::path::Path::new(&config_guard.paths.models_dir).join(def.filename);
+                    if p.exists() { candidate = Some(p); }
+                }
+                if candidate.is_none() {
+                    // カタログ中で存在する最初のモデル
+                    for def in crate::models::MODEL_CATALOG {
+                        let p = std::path::Path::new(&config_guard.paths.models_dir).join(def.filename);
+                        if p.exists() { candidate = Some(p); break; }
+                    }
+                }
+                if let Some(p) = candidate {
+                    config_guard.whisper.model_path = p.to_string_lossy().to_string();
+                }
+            }
+
+            // 設定をユーザー領域へ保存（リリース時のみ）
+            #[cfg(not(debug_assertions))]
+            {
+                let _ = config_guard.save();
+            }
+
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             select_audio_file,
             load_audio_metadata,
@@ -312,7 +581,9 @@ fn main() {
             copy_to_clipboard,
             get_available_models,
             select_model,
-            select_model_file
+            select_model_file,
+            download_model,
+            download_all_models
         ])
         .run(tauri::generate_context!())
         .expect("Tauriアプリケーションの実行に失敗しました");

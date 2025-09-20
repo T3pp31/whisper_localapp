@@ -14,6 +14,16 @@ Whisper.cpp (whisper-rs) を用いてローカルで音声を文字起こしす�
 ## 入出力
 
 - **Input**: 音声ファイル（WAV / MP3 / FLAC / M4A / OGG など）
+  
+モデルの配置/ダウンロード
+- 既定のモデル保存先（ユーザー毎）
+  - Windows: `%LOCALAPPDATA%/whisperGUIapp/models`
+  - macOS: `~/Library/Application Support/whisperGUIapp/models`
+  - Linux: `~/.local/share/whisperGUIapp/models`
+- アプリからのダウンロード
+  - 「モデルをダウンロード」ボタンで選択中のモデルを取得
+  - 「未DLをまとめてDL」ボタンで未ダウンロードのモデルを一括取得
+  - ダウンロード後、自動的に一覧が更新されます
 - **Output**: テキスト（アプリ内で表示し、コピーや保存が可能）
 
 ## アーキテクチャ概要
@@ -69,7 +79,7 @@ whisperGUIapp/
 3. **設定の確認**
    - `config.toml` で既定モデル (`whisper.model_path`) や出力ディレクトリなどを調整できます。
 
-## 実行方法
+## 実行方法 / 配布
 
 ```bash
 # デバッグ実行
@@ -80,6 +90,33 @@ cargo run --release
 ```
 
 ビルド済みバイナリは `target/release/whisperGUIapp.exe` に生成されます。必要であればこのファイルと `models/`・`config.toml` を同梱して配布してください。
+
+### インストーラーにモデルを同梱して配布する
+
+1. `models/` ディレクトリに配布したいモデル（例: `ggml-large-v3-turbo-q5_0.bin`）を配置します。
+   - 本リポジトリには `models/.gitkeep` を置いています。実際に同梱したい `.bin` を追加してください。
+2. インストーラーをビルドします。
+
+   ```bash
+   cargo tauri build
+   ```
+
+   生成物は `target/release/bundle/` 配下に出力されます（MSI/NSISなど）。
+
+3. 初回起動時、インストーラーに同梱したモデルはユーザー領域へ自動コピーされます。
+   - コピー先: Windows は `%LOCALAPPDATA%/whisperGUIapp/models`（他OSは各OSのローカルデータディレクトリ）
+   - アプリは以後このディレクトリを参照します。
+
+注意:
+- `cargo build --release` だけではインストーラーは作られません（EXEのみ）。インストーラー配布は `cargo tauri build` を使ってください。
+- `tauri.conf.json` の `bundle.resources` に `models/**` を指定しています。`models/` が空だとビルドが失敗するため、少なくとも1つの「非隠し」ファイル（例: `models/README.txt`）を置いてください（`.gitkeep` のような隠しファイルは対象外）。
+
+### 設定ファイルの保存先（配布時）
+
+- 開発中はカレント直下の `config.toml` を使う運用でも構いませんが、配布版（リリースビルド）ではユーザー設定ディレクトリに保存・読み込みします。
+  - Windows: `%APPDATA%/whisperGUIapp/config.toml`
+  - macOS/Linux: `~/.config/whisperGUIapp/config.toml`
+  - 実装: `src/config.rs` の `Config::config_file_path()` を参照
 
 ## パフォーマンス最適化
 

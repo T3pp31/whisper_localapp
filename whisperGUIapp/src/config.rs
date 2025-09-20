@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -58,14 +58,21 @@ pub struct OutputConfig {
 
 impl Config {
     pub fn load() -> Result<Self> {
-        let config_path = "config.toml";
+        let path = Self::config_file_path();
 
-        if Path::new(config_path).exists() {
-            let content = fs::read_to_string(config_path)?;
+        if path.exists() {
+            let content = fs::read_to_string(&path)?;
             let config: Config = toml::from_str(&content)?;
             Ok(config)
+        } else if Path::new("config.toml").exists() {
+            // 旧バージョン互換: カレント直下の設定があれば読み込み
+            let content = fs::read_to_string("config.toml")?;
+            let config: Config = toml::from_str(&content)?;
+            // 新しい保存先に移行
+            config.save()?;
+            Ok(config)
         } else {
-            // デフォルト設定を作成
+            // デフォルト設定を作成し、新しい保存先に書き出す
             let default_config = Self::default();
             default_config.save()?;
             Ok(default_config)
@@ -74,7 +81,11 @@ impl Config {
 
     pub fn save(&self) -> Result<()> {
         let content = toml::to_string_pretty(self)?;
-        fs::write("config.toml", content)?;
+        let path = Self::config_file_path();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, content)?;
         Ok(())
     }
 
@@ -121,5 +132,13 @@ impl Default for Config {
                 auto_save: true,
             },
         }
+    }
+}
+
+impl Config {
+    // アプリの設定保存先（ユーザー領域）: <config_dir>/whisperGUIapp/config.toml
+    fn config_file_path() -> PathBuf {
+        let base = dirs_next::config_dir().unwrap_or_else(|| PathBuf::from("."));
+        base.join("whisperGUIapp").join("config.toml")
     }
 }

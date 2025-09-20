@@ -1,4 +1,5 @@
 const { invoke, convertFileSrc } = window.__TAURI__.tauri;
+const fsApi = (window.__TAURI__ && window.__TAURI__.fs) ? window.__TAURI__.fs : null;
 
 class WhisperApp {
     constructor() {
@@ -13,7 +14,11 @@ class WhisperApp {
 
         this.audio = new Audio();
         this.audio.preload = 'auto';
+        this._blobUrl = null;
+        this._triedBlobFallback = false;
+        this._playbackPath = null; // 実際に再生に使うファイルパス（プレビュー等）
         this._bindAudioEvents();
+        this._bindDownloadEvents();
 
         this.initializeElements();
         this.attachEventListeners();
@@ -38,6 +43,11 @@ class WhisperApp {
         this.updateModelButton = document.getElementById('update-model-button');
         this.modelSelect = document.getElementById('model-select');
         this.switchModelButton = document.getElementById('switch-model-button');
+        this.downloadModelButton = document.getElementById('download-model-button');
+        this.downloadAllButton = document.getElementById('download-all-button');
+        this.downloadProgressRow = document.getElementById('download-progress-row');
+        this.downloadProgress = document.getElementById('download-progress');
+        this.downloadProgressText = document.getElementById('download-progress-text');
         this.languageSelect = document.getElementById('language-select');
         this.translateToggle = document.getElementById('translate-toggle');
         this.startTranscriptionBtn = document.getElementById('start-transcription');
@@ -49,12 +59,68 @@ class WhisperApp {
         this.logContainer = document.getElementById('log-container');
     }
 
+    _bindDownloadEvents() {
+        try {
+            const eventApi = window.__TAURI__ && window.__TAURI__.event;
+            if (!eventApi || typeof eventApi.listen !== 'function') return;
+            eventApi.listen('download-progress', (event) => {
+                const p = event && event.payload ? event.payload : {};
+                const id = p.id || '-';
+                const fn = p.filename || '';
+                const downloaded = p.downloaded || 0;
+                const total = (p.total !== undefined && p.total !== null) ? p.total : null;
+                const phase = p.phase || 'progress';
+                const msg = p.message || '';
+
+                // 表示を確実に出す
+                if (this.downloadProgressRow) this.downloadProgressRow.style.display = 'block';
+
+                const toMB = (v) => (v / (1024 * 1024)).toFixed(1);
+                let percent = null;
+                if (total && total > 0) {
+                    percent = Math.max(0, Math.min(100, Math.floor((downloaded / total) * 100)));
+                }
+
+                if (phase === 'start') {
+                    if (this.downloadProgress) this.downloadProgress.value = 0;
+                    if (this.downloadProgressText) {
+                        const totalTxt = total ? `${toMB(total)} MB` : 'サイズ不明';
+                        this.downloadProgressText.textContent = `開始: ${fn} (${totalTxt})`;
+                    }
+                    this.addLog(`ダウンロード開始: ${id} (${fn})`);
+                } else if (phase === 'progress') {
+                    if (this.downloadProgress && percent !== null) this.downloadProgress.value = percent;
+                    if (this.downloadProgressText) {
+                        const base = total ? `${toMB(downloaded)} / ${toMB(total)} MB` : `${toMB(downloaded)} MB`;
+                        const pctTxt = percent !== null ? ` (${percent}%)` : '';
+                        this.downloadProgressText.textContent = `${fn}: ${base}${pctTxt}`;
+                    }
+                } else if (phase === 'done') {
+                    if (this.downloadProgress) this.downloadProgress.value = 100;
+                    if (this.downloadProgressText) this.downloadProgressText.textContent = `完了: ${fn}`;
+                    this.addLog(`ダウンロード完了: ${fn}`);
+                } else if (phase === 'error') {
+                    if (this.downloadProgressText) this.downloadProgressText.textContent = `エラー: ${fn} ${msg}`;
+                    this.addLog(`ダウンロードエラー: ${fn} ${msg}`);
+                }
+            });
+        } catch (_) {
+            // ignore
+        }
+    }
+
     attachEventListeners() {
         this.browseButton.addEventListener('click', () => this.browseAudioFile());
         this.loadButton.addEventListener('click', () => this.loadAudioFile());
         this.browseModelButton.addEventListener('click', () => this.browseModelFile());
         this.updateModelButton.addEventListener('click', () => this.updateModelPath());
         this.switchModelButton.addEventListener('click', () => this.switchModel());
+        if (this.downloadModelButton) {
+            this.downloadModelButton.addEventListener('click', () => this.downloadSelectedModel());
+        }
+        if (this.downloadAllButton) {
+            this.downloadAllButton.addEventListener('click', () => this.downloadAllModels());
+        }
         this.languageSelect.addEventListener('change', (e) => this.changeLanguage(e.target.value));
         this.translateToggle.addEventListener('change', (e) => this.toggleTranslation(e.target.checked));
         this.startTranscriptionBtn.addEventListener('click', () => this.startTranscription());
@@ -223,6 +289,47 @@ class WhisperApp {
         }
     }
 
+    async downloadSelectedModel() {
+        const modelId = this.modelSelect.value;
+        if (!modelId) {
+            this.addLog('モデルを選択してください');
+            return;
+        }
+        try {
+            this.addLog(`ダウンロード開始: ${modelId}`);
+            if (this.downloadModelButton) this.downloadModelButton.disabled = true;
+            if (this.downloadAllButton) this.downloadAllButton.disabled = true;
+            const msg = await invoke('download_model', { modelId });
+            this.addLog(msg);
+            await this.loadAvailableModels();
+        } catch (error) {
+            this.addLog(`モデルダウンロードに失敗しました: ${error}`);
+        } finally {
+            if (this.downloadModelButton) this.downloadModelButton.disabled = false;
+            if (this.downloadAllButton) this.downloadAllButton.disabled = false;
+        }
+    }
+
+    async downloadAllModels() {
+        try {
+            this.addLog('未ダウンロードモデルの一括ダウンロードを開始します');
+            if (this.downloadModelButton) this.downloadModelButton.disabled = true;
+            if (this.downloadAllButton) this.downloadAllButton.disabled = true;
+            const list = await invoke('download_all_models');
+            if (Array.isArray(list) && list.length > 0) {
+                this.addLog(`まとめてダウンロード完了: ${list.join(', ')}`);
+            } else {
+                this.addLog('ダウンロード対象はありません（全て揃っています）');
+            }
+            await this.loadAvailableModels();
+        } catch (error) {
+            this.addLog(`まとめてダウンロードに失敗しました: ${error}`);
+        } finally {
+            if (this.downloadModelButton) this.downloadModelButton.disabled = false;
+            if (this.downloadAllButton) this.downloadAllButton.disabled = false;
+        }
+    }
+
     toggleTranslation(enabled) {
         this.translateToEnglish = enabled;
         this.addLog(`英語翻訳: ${enabled ? 'ON' : 'OFF'}`);
@@ -342,8 +449,17 @@ class WhisperApp {
             } else {
                 url = path; // 最低限のフォールバック
             }
+            // 既存の Blob URL を解放
+            if (this._blobUrl) {
+                try { URL.revokeObjectURL(this._blobUrl); } catch (_) {}
+                this._blobUrl = null;
+            }
+            this._triedBlobFallback = false;
+            this._playbackPath = path;
+
             this.audio.src = url;
             try { this.audio.load(); } catch (_) {}
+            this.addLog(`audio: src set -> ${url}`);
             this.playPauseBtn.textContent = '▶';
         } catch (_) {
             this.addLog('音声の読み込みURL生成に失敗しました');
@@ -389,15 +505,65 @@ class WhisperApp {
         });
         this.audio.addEventListener('error', () => {
             const err = this.audio.error;
-            const codes = {
-                1: 'ABORTED',
-                2: 'NETWORK',
-                3: 'DECODE',
-                4: 'SRC_NOT_SUPPORTED'
-            };
+            const codes = { 1: 'ABORTED', 2: 'NETWORK', 3: 'DECODE', 4: 'SRC_NOT_SUPPORTED' };
             const msg = err ? `code=${err.code} (${codes[err.code] || 'UNKNOWN'})` : 'unknown';
             this.addLog(`audio: error ${msg}`);
+            // ファイルURLの再生に失敗した場合、Blob URL フォールバックを試す
+            if (err && err.code === 4 && !this._triedBlobFallback) {
+                this._triedBlobFallback = true;
+                this.addLog('audio: Blob URL にフォールバックを試みます');
+                this._loadViaBlob()
+                    .then((ok) => {
+                        if (ok) this.addLog('audio: Blob フォールバックを設定しました');
+                    })
+                    .catch((e) => {
+                        this.addLog(`Blob フォールバックに失敗: ${e}`);
+                    });
+            }
         });
+
+        // ファイルから読み込んで Blob URL として設定
+        this._loadViaBlob = async () => {
+            try {
+                const p = this._playbackPath || this.currentAudioPath;
+                if (!p) return false;
+                if (!fsApi || typeof fsApi.readBinaryFile !== 'function') {
+                    this.addLog('fs.readBinaryFile が利用できません');
+                    return false;
+                }
+                const mime = this._guessMimeFromPath(p);
+                const bytes = await fsApi.readBinaryFile(p);
+                const u8 = (bytes instanceof Uint8Array) ? bytes : new Uint8Array(bytes);
+                const blob = new Blob([u8], { type: mime });
+                if (this._blobUrl) {
+                    try { URL.revokeObjectURL(this._blobUrl); } catch (_) {}
+                    this._blobUrl = null;
+                }
+                this._blobUrl = URL.createObjectURL(blob);
+                this.audio.src = this._blobUrl;
+                try { this.audio.load(); } catch (_) {}
+                this.addLog(`audio: src set (blob) -> ${mime}`);
+                try {
+                    await this.audio.play();
+                    this.playPauseBtn.textContent = '⏸';
+                } catch (_) {}
+                return true;
+            } catch (e) {
+                this.addLog(`Blob 生成エラー: ${e}`);
+                return false;
+            }
+        };
+
+        // 拡張子から簡易的に MIME を推定
+        this._guessMimeFromPath = (p) => {
+            const lower = (p || '').toLowerCase();
+            if (lower.endsWith('.wav')) return 'audio/wav';
+            if (lower.endsWith('.mp3')) return 'audio/mpeg';
+            if (lower.endsWith('.m4a') || lower.endsWith('.mp4') || lower.endsWith('.aac')) return 'audio/mp4';
+            if (lower.endsWith('.ogg') || lower.endsWith('.oga')) return 'audio/ogg';
+            if (lower.endsWith('.flac')) return 'audio/flac';
+            return 'audio/*';
+        };
     }
 
     onResultsClick(e) {

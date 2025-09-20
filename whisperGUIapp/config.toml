@@ -9,14 +9,14 @@ channels = 1
 buffer_size = 4096
 
 [gui]
-window_width = 800.0
-window_height = 600.0
+window_width = 1200.0
+window_height = 800.0
 window_title = "Whisper音声文字起こし"
 theme = "Light"
 
 [performance]
 audio_threads = 10
-whisper_threads = 20
+whisper_threads = 14
 use_gpu = false
 
 [paths]

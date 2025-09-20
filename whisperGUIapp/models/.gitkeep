@@ -1,0 +1,2 @@
+This placeholder file ensures the models/ directory is included in Tauri resources during builds.
+Replace this with actual model files (e.g., ggml-large-v3-turbo-q5_0.bin) before running `cargo tauri build` to bundle them into the installer.
