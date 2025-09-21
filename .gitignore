@@ -31,3 +31,7 @@ temp/
 
 # Logs
 *.log
+
+.claude
+.mcp.json
+CLAUDE.md
