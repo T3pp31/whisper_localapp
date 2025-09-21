@@ -1,3 +1,10 @@
+// =============================================================================
+// エントリポイント（Axum サーバー起動）
+// - 設定ファイルの読み込みと検証
+// - Whisper エンジンの初期化（可能なら）
+// - ルーティングと CORS/ログ等のミドルウェア設定
+// - TCP リスナーをバインドしてサーバーを起動
+// =============================================================================
 mod audio;
 mod config;
 mod handlers;
@@ -24,9 +31,12 @@ async fn main() -> anyhow::Result<()> {
     println!("WhisperBackendAPI を起動中...");
 
     // 設定ファイルの読み込み
+    // - 既存の config.toml があれば読み込む
+    // - なければデフォルト設定でファイルを作成した上で読み込む
     let config = Config::load_or_create_default("config.toml")?;
 
     // 設定の検証
+    // 例: ポート番号、モデルファイルの存在、ディレクトリ作成など
     config.validate()?;
 
     println!("設定ファイルを読み込みました");
@@ -34,9 +44,14 @@ async fn main() -> anyhow::Result<()> {
     println!("Whisperモデル: {}", config.whisper.model_path);
 
     // アプリケーション状態の初期化
+    // - Config を共有
+    // - WhisperEngine は起動時に初期化を試み、失敗しても起動継続
+    // - サーバー統計や開始時刻も保持
     let mut app_state = AppState::new(config.clone());
 
     // Whisperエンジンの初期化
+    // - モデルパスが無い/不正な場合はここで失敗する
+    // - 失敗してもサーバー自体は起動（/health などは利用可）
     match WhisperEngine::new(&config.whisper.model_path, &config) {
         Ok(engine) => {
             println!("Whisperエンジンを初期化しました");
@@ -49,12 +64,18 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // CORSレイヤーの設定
+    // - Any を指定してデモ/ローカル用途での疎通を優先
+    // - 本番では許可オリジンを明示し、許可ヘッダー/メソッドも最小化する
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
 
     // ルーターの構築
+    // - 文字起こし API（タイムスタンプ有/無）
+    // - モデル/言語/ヘルス/統計の情報系 API
+    // - OPTIONS への CORS 応答（プリフライト）
+    // - ミドルウェア: HTTP トレース + CORS
     let app = Router::new()
         // 文字起こしエンドポイント
         .route("/transcribe", post(handlers::transcribe_basic))
@@ -82,9 +103,11 @@ async fn main() -> anyhow::Result<()> {
         )
 
         // アプリケーション状態の共有
+        // - ハンドラから Config や WhisperEngine、統計にアクセス可能
         .with_state(app_state);
 
     // サーバーアドレスの解析
+    // - `host:port` 形式の文字列を `SocketAddr` に変換
     let addr: SocketAddr = config.server_address().parse()
         .map_err(|e| anyhow::anyhow!("無効なサーバーアドレス: {}", e))?;
 
@@ -102,6 +125,7 @@ async fn main() -> anyhow::Result<()> {
     println!("  curl -F \"file=@audio.wav\" -F \"language=ja\" http://{}/transcribe-with-timestamps", addr);
 
     // サーバーの起動
+    // - 明示的に TcpListener を生成し、`axum::serve` に渡す
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app)
         .await

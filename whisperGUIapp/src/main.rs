@@ -3,6 +3,11 @@
     windows_subsystem = "windows"
 )]
 
+//! Tauri ベースの Whisper ローカルアプリ本体。
+//! - 音声選択/プレビュー生成/文字起こしをコマンドとして提供
+//! - モデルの一覧・選択・ダウンロード管理
+//! - 設定の読み書きとユーザー領域への資産展開
+
 mod audio;
 mod config;
 mod models;
@@ -19,6 +24,9 @@ use std::sync::{Arc, Mutex};
 use tauri::{ClipboardManager, Manager, State};
 use std::io::{Read, Write};
 
+/// Tauri 側で共有するアプリの状態。
+/// - `config`: 現在のアプリ設定
+/// - `whisper_engine`: ロード済み Whisper コンテキスト（必要時に初期化）
 #[derive(Clone)]
 struct AppState {
     config: Arc<Mutex<Config>>,
@@ -37,18 +45,21 @@ impl AppState {
     }
 }
 
+/// 音声メタデータの返却ペイロード。
 #[derive(Serialize, Deserialize)]
 struct AudioMetadataResponse {
     duration: f32,
     sample_rate: u32,
 }
 
+/// 文字起こし結果の返却ペイロード。
 #[derive(Serialize, Deserialize)]
 struct TranscriptionResult {
     text: String,
     segments: usize,
 }
 
+/// モデル一覧表示用の情報。
 #[derive(Serialize, Deserialize)]
 struct ModelInfo {
     id: String,
@@ -61,6 +72,7 @@ struct ModelInfo {
 }
 
 // Tauri コマンドハンドラー
+/// ファイルダイアログで音声/動画ファイルを選択する。
 #[tauri::command]
 fn select_audio_file() -> Result<String, String> {
     use tauri::api::dialog::blocking::FileDialogBuilder;
@@ -76,6 +88,7 @@ fn select_audio_file() -> Result<String, String> {
     }
 }
 
+/// ファイルのメタデータ（長さ・サンプリングレート）を取得する。
 #[tauri::command]
 async fn load_audio_metadata(path: String, state: State<'_, AppState>) -> Result<AudioMetadataResponse, String> {
     let config = state.config.lock().map_err(|_| "設定の読み込みに失敗しました")?;
@@ -92,6 +105,7 @@ async fn load_audio_metadata(path: String, state: State<'_, AppState>) -> Result
     })
 }
 
+/// 16kHz モノラルのプレビュー用 WAV を temp に生成し、絶対パスを返す。
 #[tauri::command]
 async fn prepare_preview_wav(path: String, state: State<'_, AppState>) -> Result<String, String> {
     let config = state
@@ -133,6 +147,7 @@ async fn prepare_preview_wav(path: String, state: State<'_, AppState>) -> Result
     Ok(preview_path.to_string_lossy().to_string())
 }
 
+/// UI から指定された言語設定を保存し、Whisper エンジンをリセット。
 #[tauri::command]
 async fn update_language_setting(language: String, state: State<'_, AppState>) -> Result<(), String> {
     let mut config = state.config.lock().map_err(|_| "設定の更新に失敗しました")?;
@@ -151,6 +166,8 @@ async fn update_language_setting(language: String, state: State<'_, AppState>) -
     Ok(())
 }
 
+/// 指定音声の文字起こしを実行。言語・翻訳有無を受け取り、
+/// タイムスタンプ付きセグメントを結合したテキストを返す。
 #[tauri::command]
 async fn start_transcription(
     audio_path: String,
@@ -230,14 +247,16 @@ async fn start_transcription(
     })
 }
 
+/// 結果テキストをクリップボードへコピー。
 #[tauri::command]
-    fn copy_to_clipboard(text: String, app: tauri::AppHandle) -> Result<(), String> {
+fn copy_to_clipboard(text: String, app: tauri::AppHandle) -> Result<(), String> {
     let mut clipboard = app.clipboard_manager();
     clipboard
         .write_text(text)
         .map_err(|e| format!("クリップボードへのコピーに失敗しました: {}", e))
 }
 
+/// モデルダウンロードの進捗イベント。
 #[derive(Serialize, Clone)]
 struct DownloadProgressPayload {
     id: String,
@@ -252,6 +271,7 @@ fn emit_progress(app: &tauri::AppHandle, payload: &DownloadProgressPayload) {
     let _ = app.emit_all("download-progress", payload.clone());
 }
 
+/// 指定のモデル 1 件をダウンロードして保存する。
 #[tauri::command]
 async fn download_model(model_id: String, app: tauri::AppHandle, state: State<'_, AppState>) -> Result<String, String> {
     let (url, filename) = {
@@ -291,6 +311,7 @@ async fn download_model(model_id: String, app: tauri::AppHandle, state: State<'_
     Ok(format!("{} をダウンロードしました", filename))
 }
 
+/// 既知の全モデルをダウンロードする（存在するものはスキップ）。
 #[tauri::command]
 async fn download_all_models(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<Vec<String>, String> {
     let models_dir = {
@@ -323,6 +344,7 @@ async fn download_all_models(app: tauri::AppHandle, state: State<'_, AppState>) 
     Ok(downloaded)
 }
 
+/// ブロッキングダウンロード実体。定期的に進捗イベントを発火する。
 fn download_to_file_with_progress(
     app: &tauri::AppHandle,
     model_id: &str,
@@ -404,6 +426,7 @@ fn download_to_file_with_progress(
     );
     Ok(())
 }
+/// 利用可能なモデルの一覧を返す（ダウンロード状況や選択中のモデル含む）。
 #[tauri::command]
 fn get_available_models(state: State<'_, AppState>) -> Result<Vec<ModelInfo>, String> {
     let config = state.config.lock().map_err(|_| "設定の読み込みに失敗しました")?;
@@ -436,6 +459,7 @@ fn get_available_models(state: State<'_, AppState>) -> Result<Vec<ModelInfo>, St
     Ok(models)
 }
 
+/// モデル ID を指定して現在の使用モデルを切り替える。
 #[tauri::command]
 fn select_model(model_id: String, state: State<'_, AppState>) -> Result<String, String> {
     let model_def = MODEL_CATALOG
@@ -467,6 +491,7 @@ fn select_model(model_id: String, state: State<'_, AppState>) -> Result<String, 
     Ok(format!("モデルを {} に切り替えました", model_def.label))
 }
 
+/// ファイルダイアログからローカルのモデルファイル（.bin）を選択する。
 #[tauri::command]
 fn select_model_file() -> Result<String, String> {
     use tauri::api::dialog::blocking::FileDialogBuilder;
@@ -589,6 +614,7 @@ fn main() {
         .expect("Tauriアプリケーションの実行に失敗しました");
 }
 
+/// 000:00:00.000 形式のタイムスタンプ文字列へ変換。
 fn format_timestamp_ms(ms: u64) -> String {
     let total_seconds = ms / 1000;
     let milliseconds = ms % 1000;

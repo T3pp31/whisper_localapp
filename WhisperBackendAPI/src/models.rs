@@ -3,31 +3,46 @@ use std::collections::HashMap;
 
 // =============================================================================
 // API Request/Response Models
+// - ハンドラとのデータ受け渡しに用いる型
 // =============================================================================
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TranscribeRequest {
+    /// 言語コード（例: "ja", "en", "auto"）。未指定の場合は設定に従う
     pub language: Option<String>,
+    /// 英語へ翻訳するかどうか（true/false）
     pub translate_to_english: Option<bool>,
+    /// セグメントのタイムスタンプを含めるかどうか
     pub include_timestamps: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TranscribeResponse {
+    /// 文字起こしテキスト（全体）
     pub text: String,
+    /// 推定/指定された言語コード
     pub language: Option<String>,
+    /// 入力音声の長さ（ミリ秒）
     pub duration_ms: Option<u64>,
+    /// セグメント情報（タイムスタンプ付き）
     pub segments: Option<Vec<TranscriptionSegment>>,
+    /// サーバー側での処理時間（ミリ秒）
     pub processing_time_ms: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ModelInfo {
+    /// 論理名（UI 表示向け）
     pub name: String,
+    /// 実ファイルパス（存在チェックに使用）
     pub file_path: String,
+    /// ファイルサイズ（MB）
     pub size_mb: u64,
+    /// モデルの説明
     pub description: String,
+    /// 言語サポートの分類（例: multilingual）
     pub language_support: Vec<String>,
+    /// サーバー上にダウンロード済みか
     pub is_available: bool,
 }
 
@@ -55,6 +70,7 @@ pub struct ErrorResponse {
 
 // =============================================================================
 // Core Data Models (from whisperGUIapp)
+// - 文字起こし結果のセグメントなど、UI 側での再利用を想定
 // =============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,6 +114,7 @@ impl TranscriptionSegment {
     }
 
     fn ms_to_srt_time(ms: u64) -> String {
+        // 例: 00:01:23,456 の形式に変換
         let total_seconds = ms / 1000;
         let milliseconds = ms % 1000;
         let seconds = total_seconds % 60;
@@ -111,6 +128,7 @@ impl TranscriptionSegment {
     }
 
     fn ms_to_vtt_time(ms: u64) -> String {
+        // 例: 00:01:23.456 の形式に変換
         let total_seconds = ms / 1000;
         let milliseconds = ms % 1000;
         let seconds = total_seconds % 60;
@@ -126,6 +144,7 @@ impl TranscriptionSegment {
 
 // =============================================================================
 // Model Catalog
+// - UI のモデル選択やダウンロードリンク表示に使うメタ情報
 // =============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -244,6 +263,7 @@ impl Default for ModelCatalog {
 
 // =============================================================================
 // Server State and Statistics
+// - API 利用状況を簡易的に記録（監視/デバッグ用）
 // =============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -304,6 +324,7 @@ impl ServerStats {
 
 // =============================================================================
 // Error Types
+// - ハンドラ→レスポンス変換で HTTP ステータスにマッピング
 // =============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

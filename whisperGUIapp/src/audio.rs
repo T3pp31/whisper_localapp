@@ -1,3 +1,10 @@
+//! 音声ファイルの読み込み・メタデータ取得・リサンプリングなど、
+//! Whisper 前処理に関わる機能をまとめたモジュール。
+//! - 任意のコンテナ/コーデックを Symphonia でデコード
+//! - 複数チャネルをモノラルへ集約
+//! - 16kHz など指定サンプリングレートへリサンプリング
+//! - WAV への簡易書き出し（プレビュー用）
+
 use crate::config::Config;
 use anyhow::Result;
 use rubato::{
@@ -12,22 +19,26 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
+/// 音声ファイルの基本メタデータ。
 pub struct AudioMetadata {
     pub duration_seconds: f32,
     pub sample_rate: u32,
 }
 
+/// 音声処理の中核クラス。コンフィグに基づいてデコードやリサンプリングを行う。
 pub struct AudioProcessor {
     config: Config,
 }
 
 impl AudioProcessor {
+    /// 構成を取り込み、プロセッサを作成。
     pub fn new(config: &Config) -> Result<Self> {
         Ok(Self {
             config: config.clone(),
         })
     }
 
+    /// デコードせずに長さやサンプリングレートなどを概算取得する。
     pub fn probe_metadata(&self, file_path: &str) -> Result<AudioMetadata> {
         let path = Path::new(file_path);
         if !path.exists() {
@@ -69,6 +80,7 @@ impl AudioProcessor {
         let mut total_duration = 0u64;
         let mut total_frames = 0u64;
 
+        // 各パケットを走査して総フレーム数/総durationを算出
         loop {
             let packet = match format.next_packet() {
                 Ok(packet) => packet,
@@ -97,6 +109,7 @@ impl AudioProcessor {
             return Err(anyhow::anyhow!("音声データが空です"));
         }
 
+        // time_base があればそれを使用、なければフレーム数/サンプルレートで概算
         let duration_seconds = if let Some(time_base) = time_base {
             let time = time_base.calc_time(total_duration);
             (time.seconds as f64 + time.frac) as f32
@@ -112,6 +125,7 @@ impl AudioProcessor {
         })
     }
 
+    /// 音声ファイルを読み込み、モノラル f32 波形に変換して返す（必要に応じて指定レートへリサンプリング）。
     pub fn load_audio_file(&mut self, file_path: &str) -> Result<Vec<f32>> {
         let path = Path::new(file_path);
         if !path.exists() {
@@ -209,7 +223,7 @@ impl AudioProcessor {
         // 既にモノラルへ変換済み
         let mono_samples = samples;
 
-        // 16kHzにリサンプル
+        // 16kHzなど設定レートにリサンプル
         let target_sample_rate = self.config.audio.sample_rate as f64;
         let resampled = if (original_sample_rate - target_sample_rate).abs() > 1.0 {
             self.resample_audio(mono_samples, original_sample_rate, target_sample_rate)?
@@ -227,6 +241,7 @@ impl AudioProcessor {
         Ok(resampled)
     }
 
+    /// 入力ファイルを読み込み、モノラル16bit PCM WAV で保存（プレビュー用）。
     pub fn decode_to_wav_file(&mut self, src_path: &str, dst_path: &str) -> Result<()> {
         let samples_f32 = self.load_audio_file(src_path)?;
         let sr = self.config.audio.sample_rate as u32;
@@ -234,6 +249,7 @@ impl AudioProcessor {
         Ok(())
     }
 
+    /// デコード済みバッファから f32 モノラル波形を抽出（各サンプル形式を正規化）。
     fn extract_samples_from_buffer(
         &self,
         audio_buf: &AudioBufferRef,
@@ -278,6 +294,7 @@ impl AudioProcessor {
         Ok(())
     }
 
+    /// 多チャネル波形を単純平均でモノラル化。
     fn convert_to_mono(&self, samples: Vec<f32>, channels: usize) -> Vec<f32> {
         if channels == 1 {
             return samples;
@@ -297,6 +314,7 @@ impl AudioProcessor {
         mono_samples
     }
 
+    /// SincFixed（rubato）で音質と負荷のバランスを取りつつリサンプリング。
     fn resample_audio(
         &self,
         samples: Vec<f32>,
@@ -307,7 +325,7 @@ impl AudioProcessor {
             return Ok(samples);
         }
 
-        // SincFixed リサンプラーを作成
+        // SincFixed リサンプラーを作成（音質と負荷のバランスを重視）
         let params = SincInterpolationParameters {
             sinc_len: 256,
             f_cutoff: 0.95,
@@ -324,7 +342,7 @@ impl AudioProcessor {
             1, // モノラル
         )?;
 
-        // チャンネルごとにベクターを準備
+        // チャンネルごとにベクターを準備（モノラルなので1ch）
         let input_channels = vec![samples];
 
         // リサンプリング実行
@@ -334,6 +352,7 @@ impl AudioProcessor {
     }
 }
 
+/// 非依存ライブラリでの簡易WAV書き出し（モノラル16bit）。
 fn write_wav_mono_16(path: &str, sample_rate: u32, samples: &[f32]) -> Result<()> {
     use std::fs::File;
     use std::io::{Seek, SeekFrom, Write};

@@ -14,6 +14,7 @@ use symphonia::core::probe::Hint;
 use tempfile::{NamedTempFile, TempDir};
 use std::io::Write;
 
+/// 入力音声ファイルから取得する基本メタデータ
 #[derive(Debug, Clone)]
 pub struct AudioMetadata {
     pub duration_seconds: f32,
@@ -23,6 +24,7 @@ pub struct AudioMetadata {
     pub format: String,
 }
 
+/// Whisper に渡す前処理後の音声データ
 #[derive(Debug)]
 pub struct ProcessedAudio {
     pub samples: Vec<f32>,
@@ -31,6 +33,10 @@ pub struct ProcessedAudio {
     pub original_metadata: AudioMetadata,
 }
 
+/// 音声処理ユーティリティ
+/// - 一時ファイル/ディレクトリの管理
+/// - デコード（symphonia）→ f32 モノラル化
+/// - リサンプリング（rubato）でターゲット SR へ
 pub struct AudioProcessor {
     config: Config,
     temp_dir: TempDir,
@@ -38,6 +44,8 @@ pub struct AudioProcessor {
 
 impl AudioProcessor {
     pub fn new(config: &Config) -> Result<Self> {
+        // config で指定された temp ディレクトリ配下に、使い捨ての一時ディレクトリを作成
+        // Drop で自動削除されるため、明示的な掃除は不要
         let temp_dir = TempDir::new_in(&config.paths.temp_dir)?;
 
         Ok(Self {
@@ -47,6 +55,7 @@ impl AudioProcessor {
     }
 
     /// 音声ファイルのメタデータを取得
+    /// - デコードは行わず、トラック/サンプリングレート/推定再生時間などを確認
     pub fn probe_metadata<P: AsRef<Path>>(&self, file_path: P) -> Result<AudioMetadata> {
         let path = file_path.as_ref();
         if !path.exists() {
@@ -95,6 +104,7 @@ impl AudioProcessor {
         let mut total_duration = 0u64;
         let mut total_frames = 0u64;
 
+        // 各パケットを走査して総フレーム数/総時間を概算
         loop {
             let packet = match format.next_packet() {
                 Ok(packet) => packet,
@@ -121,6 +131,7 @@ impl AudioProcessor {
             return Err(anyhow::anyhow!("音声データが空です"));
         }
 
+        // 再生時間を time_base もしくはフレーム数から算出
         let duration_seconds = if let Some(time_base) = time_base {
             let time = time_base.calc_time(total_duration);
             (time.seconds as f64 + time.frac) as f32
@@ -146,6 +157,7 @@ impl AudioProcessor {
     }
 
     /// バイト配列から一時ファイルを作成し、音声データを処理
+    /// - ブラウザからのアップロード（メモリ上のバイト列）に対応する経路
     pub fn process_audio_from_bytes(&mut self, audio_bytes: &[u8], filename: &str) -> Result<ProcessedAudio> {
         // 一時ファイルを作成
         let temp_file = self.create_temp_file_from_bytes(audio_bytes, filename)?;
@@ -155,6 +167,7 @@ impl AudioProcessor {
     }
 
     /// 音声ファイルを処理してWhisper用のf32サンプルに変換
+    /// - デコード→モノラル化→リサンプリング（必要時）→持続時間計算
     pub fn process_audio_file<P: AsRef<Path>>(&mut self, file_path: P) -> Result<ProcessedAudio> {
         let path = file_path.as_ref();
 
@@ -164,7 +177,7 @@ impl AudioProcessor {
         // 音声データを読み込み
         let samples = self.load_audio_file(path)?;
 
-        // 期間を計算
+        // 期間を計算（ターゲット SR でのサンプル数から ms を求める）
         let duration_ms = (samples.len() as f64 / self.config.audio.sample_rate as f64 * 1000.0) as u64;
 
         Ok(ProcessedAudio {
@@ -176,6 +189,8 @@ impl AudioProcessor {
     }
 
     /// 音声ファイルをf32サンプル配列として読み込み
+    /// - symphonia を使って任意フォーマット（wav/mp3/m4a/...）をデコード
+    /// - 多チャンネルは単純平均でモノラル化
     pub fn load_audio_file<P: AsRef<Path>>(&mut self, file_path: P) -> Result<Vec<f32>> {
         let path = file_path.as_ref();
         if !path.exists() {
@@ -216,6 +231,7 @@ impl AudioProcessor {
 
         let mut samples = Vec::new();
 
+        // パケットを逐次デコードしてサンプル列を構築
         loop {
             let packet = match format.next_packet() {
                 Ok(packet) => packet,
@@ -249,6 +265,7 @@ impl AudioProcessor {
             return Err(anyhow::anyhow!("音声データが空です"));
         }
 
+        // 元のサンプリングレートを取得し、必要に応じてターゲット SR へリサンプリング
         let original_sample_rate = decoder
             .codec_params()
             .sample_rate
@@ -266,6 +283,7 @@ impl AudioProcessor {
     }
 
     /// バイト配列から一時ファイルを作成
+    /// - 拡張子は元ファイル名から推測し、デコーダーのヒントに寄与
     pub fn create_temp_file_from_bytes(&self, bytes: &[u8], filename: &str) -> Result<NamedTempFile> {
         let extension = Path::new(filename)
             .extension()
@@ -284,6 +302,7 @@ impl AudioProcessor {
     }
 
     /// サポートされているファイル形式かチェック
+    /// - 設定の `audio.supported_formats` に含まれているかを確認
     pub fn is_supported_format(&self, filename: &str) -> bool {
         let extension = Path::new(filename)
             .extension()
@@ -327,6 +346,7 @@ impl AudioProcessor {
         audio_buf: &AudioBufferRef,
         samples: &mut Vec<f32>,
     ) -> Result<()> {
+        // サンプル型ごとに取り出し、単純平均でモノラル化
         match audio_buf {
             AudioBufferRef::F32(buf) => {
                 let ch = buf.spec().channels.count();
@@ -372,6 +392,7 @@ impl AudioProcessor {
         input_rate: f64,
         output_rate: f64,
     ) -> Result<Vec<f32>> {
+        // SR がほぼ同等ならそのまま返す
         if (input_rate - output_rate).abs() < 1.0 {
             return Ok(samples);
         }
@@ -384,6 +405,7 @@ impl AudioProcessor {
             window: WindowFunction::BlackmanHarris2,
         };
 
+        // 高品質な Sinc 補間でのリサンプリング
         let mut resampler = SincFixedIn::<f32>::new(
             output_rate / input_rate,
             2.0,
@@ -410,6 +432,7 @@ impl Drop for AudioProcessor {
 // =============================================================================
 
 /// 音声ファイルの形式を検出
+/// - 拡張子優先。無い/不明な場合はマジックナンバーで推測
 pub fn detect_audio_format<P: AsRef<Path>>(file_path: P) -> Result<String> {
     let path = file_path.as_ref();
 
