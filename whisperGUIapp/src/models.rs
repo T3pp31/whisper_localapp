@@ -1,5 +1,9 @@
+//! Whisper モデルのカタログ定義と補助関数。
+//! UI での選択やダウンロードに利用する。
+
 use serde::Serialize;
 
+/// カタログ上の 1 モデルを表す定義情報。
 #[derive(Clone, Copy)]
 pub struct ModelDefinition {
     pub id: &'static str,
@@ -9,6 +13,7 @@ pub struct ModelDefinition {
     pub size_mb: Option<f64>,
 }
 
+/// 利用可能モデルのカタログ。
 pub const MODEL_CATALOG: &[ModelDefinition] = &[
     ModelDefinition {
         id: "tiny",
@@ -54,10 +59,12 @@ pub const MODEL_CATALOG: &[ModelDefinition] = &[
     },
 ];
 
+/// モデル ID から定義情報を取得する。
 pub fn get_model_definition(id: &str) -> Option<&'static ModelDefinition> {
     MODEL_CATALOG.iter().find(|model| model.id == id)
 }
 
+/// UI 側に返すモデル情報。
 #[derive(Serialize, Clone)]
 pub struct ModelInfo {
     pub id: String,

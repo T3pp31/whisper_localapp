@@ -1,8 +1,14 @@
+//! Whisper 本体（whisper-rs）との橋渡しを行うエンジン層。
+//! - コンテキストの初期化・保持
+//! - パラメータ組み立てと言語/翻訳などの制御
+//! - プレーンテキスト or タイムスタンプ付きセグメントの取得
+
 use crate::config::Config;
 use anyhow::Result;
 use std::path::Path;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
+/// whisper-rs を安全に扱うための薄いラッパー。
 pub struct WhisperEngine {
     context: WhisperContext,
     language: Option<String>,
@@ -10,6 +16,7 @@ pub struct WhisperEngine {
 }
 
 impl WhisperEngine {
+    /// 実行ごとのパラメータを構築するヘルパ。
     fn make_params<'a>(&'a self, language_override: Option<&'a str>) -> FullParams<'a, 'static> {
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
 
@@ -27,6 +34,7 @@ impl WhisperEngine {
         params
     }
 
+    /// モデルを読み込み、Whisper コンテキストを初期化する。
     pub fn new(model_path: &str, config: &Config) -> Result<Self> {
         // モデルファイルの存在確認
         if !Path::new(model_path).exists() {
@@ -56,6 +64,7 @@ impl WhisperEngine {
         })
     }
 
+    /// プレーンテキストの文字起こしを実行する（タイムスタンプなし）。
     pub fn transcribe(&self, audio_data: &[f32]) -> Result<String> {
         // Whisperの状態を作成
         let mut state = self
@@ -99,6 +108,7 @@ impl WhisperEngine {
         Ok(result)
     }
 
+    /// タイムスタンプ付きで文字起こしを実行する。
     pub fn transcribe_with_timestamps(
         &self,
         audio_data: &[f32],
@@ -149,6 +159,7 @@ impl WhisperEngine {
     }
 }
 
+/// 1 セグメント分の認識結果。
 #[derive(Debug, Clone)]
 pub struct TranscriptionSegment {
     pub text: String,
@@ -157,6 +168,7 @@ pub struct TranscriptionSegment {
 }
 
 impl TranscriptionSegment {
+    /// SRT 1 エントリの文字列に整形する（index は 1 始まり）。
     pub fn to_srt_format(&self, index: usize) -> String {
         let start_time = Self::ms_to_srt_time(self.start_time_ms);
         let end_time = Self::ms_to_srt_time(self.end_time_ms);
@@ -170,6 +182,7 @@ impl TranscriptionSegment {
         )
     }
 
+    /// ミリ秒を `HH:MM:SS,mmm` 形式へ変換。
     fn ms_to_srt_time(ms: u64) -> String {
         let total_seconds = ms / 1000;
         let milliseconds = ms % 1000;

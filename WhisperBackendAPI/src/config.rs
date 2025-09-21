@@ -3,6 +3,11 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::fs;
 
+// =============================================================================
+// 設定モデル
+// - サーバー/Whisper/音声処理/性能/パス/制限の各カテゴリで構成
+// - `Config::load_or_create_default` で既定ファイル生成にも対応
+// =============================================================================
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub server: ServerConfig,
@@ -15,47 +20,69 @@ pub struct Config {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
+    /// バインドするホスト（例: 0.0.0.0）
     pub host: String,
+    /// バインドするポート（例: 8080）
     pub port: u16,
+    /// 許可する CORS オリジン
     pub cors_origins: Vec<String>,
+    /// リクエストの最大サイズ（バイト）
     pub max_request_size: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WhisperConfig {
+    /// Whisper モデルの実ファイルパス
     pub model_path: String,
+    /// UI/情報表示用の既定モデル名
     pub default_model: String,
+    /// 既定の言語設定（"auto" は自動検出）
     pub language: String,
+    /// GPU を有効にするか（whisper-rs の対応に依存）
     pub enable_gpu: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioConfig {
+    /// ターゲットサンプリングレート（Hz）
     pub sample_rate: u32,
+    /// チャンネル数（現状モノラル前提）
     pub channels: u16,
+    /// デコード時に利用するバッファサイズ
     pub buffer_size: usize,
+    /// 許可される拡張子（簡易判定）
     pub supported_formats: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceConfig {
+    /// 音声入出力処理に割くスレッド数（未使用の場合あり）
     pub audio_threads: usize,
+    /// Whisper 推論に割くスレッド数
     pub whisper_threads: usize,
+    /// API の同時処理上限（現状は統計のみ）
     pub max_concurrent_requests: usize,
+    /// リクエストのタイムアウト（秒）
     pub request_timeout_seconds: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PathsConfig {
+    /// モデル配置ディレクトリ
     pub models_dir: String,
+    /// 一時ファイルディレクトリ
     pub temp_dir: String,
+    /// アップロード保存ディレクトリ
     pub upload_dir: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LimitsConfig {
+    /// アップロード最大ファイルサイズ（MB）
     pub max_file_size_mb: usize,
+    /// 音声の最大長（分）
     pub max_audio_duration_minutes: u32,
+    /// 一時ファイルの自動クリーンアップまでの時間（分）
     pub cleanup_temp_files_after_minutes: u32,
 }
 
@@ -145,6 +172,7 @@ impl Config {
         }
 
         // モデルファイルの存在確認
+        // - 初回起動時など未ダウンロードの可能性あり
         if !Path::new(&self.whisper.model_path).exists() {
             return Err(anyhow::anyhow!(
                 "Whisperモデルファイルが見つかりません: {}\n\
@@ -155,6 +183,7 @@ impl Config {
         }
 
         // ディレクトリの存在確認と作成
+        // - models/temp/uploads が無い場合は作成
         for dir in &[&self.paths.models_dir, &self.paths.temp_dir, &self.paths.upload_dir] {
             if !Path::new(dir).exists() {
                 fs::create_dir_all(dir)

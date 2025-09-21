@@ -6,6 +6,8 @@ use std::sync::Arc;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 /// Whisperエンジンのラッパー（スレッドセーフ）
+/// - whisper-rs の `WhisperContext` を `Arc` で共有
+/// - 各推論は独立した `state` を生成して実行する安全な使い方
 pub struct WhisperEngine {
     context: Arc<WhisperContext>,
     language: Option<String>,
@@ -24,6 +26,8 @@ pub struct TranscriptionResult {
 
 impl WhisperEngine {
     /// 新しいWhisperEngineを作成
+    /// - モデルファイルの存在確認 → WhisperContext 初期化
+    /// - Config からスレッド数/言語/GPU 設定を反映
     pub fn new(model_path: &str, config: &Config) -> Result<Self> {
         // モデルファイルの存在確認
         if !Path::new(model_path).exists() {
@@ -39,6 +43,7 @@ impl WhisperEngine {
         let ctx_params = WhisperContextParameters::default();
 
         // GPU使用の設定
+        // - whisper-rs のバージョンにより可否が異なるため、ここではフラグのみ保持
         if config.whisper.enable_gpu {
             // GPU関連の設定があれば追加
             // ctx_params.use_gpu = true; // whisper-rsのバージョンによって異なる
@@ -64,6 +69,7 @@ impl WhisperEngine {
     }
 
     /// 基本的な文字起こし（タイムスタンプなし）
+    /// - `transcribe_internal` を include_timestamps=false で呼び出し、テキストのみ返す
     pub fn transcribe(&self, audio_data: &[f32]) -> Result<String> {
         let start_time = std::time::Instant::now();
 
@@ -76,6 +82,7 @@ impl WhisperEngine {
     }
 
     /// タイムスタンプ付きの詳細な文字起こし
+    /// - セグメントの開始/終了時刻（10ms 単位）をミリ秒に変換して返す
     pub fn transcribe_with_timestamps(
         &self,
         audio_data: &[f32],
@@ -103,6 +110,8 @@ impl WhisperEngine {
     }
 
     /// 内部的な文字起こし処理
+    /// - whisper-rs の `state.full` を用いる標準フロー
+    /// - language 指定（上書き）/翻訳モード/タイムスタンプ出力を切り替え
     fn transcribe_internal(
         &self,
         audio_data: &[f32],
@@ -122,6 +131,7 @@ impl WhisperEngine {
             .map_err(|e| anyhow::anyhow!("Whisper状態の作成に失敗: {}", e))?;
 
         // パラメータを設定
+        // - 言語/スレッド数/翻訳/タイムスタンプ等
         let params = self.make_params(language_override, translate_to_english, include_timestamps);
 
         // 文字起こし実行
@@ -130,6 +140,7 @@ impl WhisperEngine {
             .map_err(|e| anyhow::anyhow!("文字起こしに失敗: {}", e))?;
 
         // 結果の取得
+        // - セグメントごとにテキスト/開始(t0)/終了(t1) を参照
         let segment_count = state
             .full_n_segments()
             .map_err(|e| anyhow::anyhow!("セグメント数の取得に失敗: {}", e))?;
@@ -172,6 +183,7 @@ impl WhisperEngine {
         };
 
         // 言語検出結果を取得（可能であれば）
+        // - 明示指定が優先。無ければエンジン既定（Config）を返す
         let detected_language = language_override.map(|lang| lang.to_string())
             .or_else(|| self.language.clone());
 
@@ -184,6 +196,8 @@ impl WhisperEngine {
     }
 
     /// Whisperパラメータを作成
+    /// - Greedy デコード（best_of=1）
+    /// - 進捗ログ等はサーバーコンソールを汚さないよう無効化
     fn make_params<'a>(
         &'a self,
         language_override: Option<&'a str>,
@@ -254,6 +268,7 @@ pub struct ModelInfo {
 }
 
 /// Whisperエンジンプール（複数のリクエストを同時処理するため）
+/// - 現状のコードでは未使用だが、将来的なスループット向上に備えた構造
 pub struct WhisperEnginePool {
     engines: Vec<WhisperEngine>,
     current_index: std::sync::atomic::AtomicUsize,
@@ -295,6 +310,8 @@ impl WhisperEnginePool {
 // =============================================================================
 
 /// 音声データの前処理（ノイズ除去等）
+/// - まずは振幅の基本正規化のみ。
+/// - 追加のフィルタ処理は必要に応じて拡張可能。
 pub fn preprocess_audio(audio_data: &mut [f32]) {
     // 基本的な正規化
     normalize_audio(audio_data);
@@ -306,6 +323,7 @@ pub fn preprocess_audio(audio_data: &mut [f32]) {
 }
 
 /// 音声データの正規化
+/// - 振幅の最大絶対値を 0.95 に収まるようスケーリング
 fn normalize_audio(audio_data: &mut [f32]) {
     if audio_data.is_empty() {
         return;

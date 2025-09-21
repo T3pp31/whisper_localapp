@@ -12,6 +12,8 @@ use std::time::Instant;
 
 // =============================================================================
 // Application State
+// - ハンドラ間で共有する情報を集約（設定、Whisper エンジン、統計、起動時刻）
+// - `Arc<Mutex<..>>` を用いてスレッドセーフに共有
 // =============================================================================
 
 #[derive(Clone)]
@@ -33,6 +35,7 @@ impl AppState {
     }
 
     pub fn with_whisper_engine(self, engine: WhisperEngine) -> Self {
+        // 起動後に Whisper エンジンを差し込む（初期化に失敗してもサーバーは起動できる設計）
         *self.whisper_engine.lock().unwrap() = Some(engine);
         self
     }
@@ -40,6 +43,7 @@ impl AppState {
 
 // =============================================================================
 // Error Handling
+// - 型安全な API エラーを定義し、`IntoResponse` で JSON へ変換
 // =============================================================================
 
 pub type ApiResult<T> = Result<T, ApiError>;
@@ -104,6 +108,7 @@ pub async fn transcribe_basic(
     mut multipart: Multipart,
 ) -> ApiResult<Json<TranscribeResponse>> {
     // 統計情報を更新
+    // - 受信直後にリクエスト数/アクティブ数を更新
     {
         let mut stats = state.stats.lock().unwrap();
         stats.record_request();
@@ -112,6 +117,8 @@ pub async fn transcribe_basic(
     let start_time = Instant::now();
 
     // ファイルフィールドを取得
+    // - フロントエンドは `file` という name で送る想定
+    // - 最初のフィールドだけを受け取り、追加フィールドは扱わない
     let field = multipart
         .next_field()
         .await
@@ -129,6 +136,7 @@ pub async fn transcribe_basic(
         .map_err(|e| ApiError::new(ApiErrorCode::InvalidInput, format!("ファイルデータの読み込みに失敗: {}", e)))?;
 
     // 処理を実行
+    // - 共通処理 `process_transcription` へ委譲
     let result = process_transcription(
         state.clone(),
         file_data.to_vec(),
@@ -142,6 +150,8 @@ pub async fn transcribe_basic(
     ).await;
 
     // 統計情報を更新
+    // - 成功: 平均処理時間の算出に用いる
+    // - 失敗: 失敗カウントを加算
     match &result {
         Ok(response) => {
             let mut stats = state.stats.lock().unwrap();
@@ -178,6 +188,9 @@ pub async fn transcribe_with_timestamps(
     let mut filename = String::new();
 
     // マルチパートフィールドを処理
+    // - file: 音声データ本体
+    // - language: 言語コード（例: ja, en, auto など）
+    // - translate_to_english: true/false
     while let Some(field) = multipart
         .next_field()
         .await
@@ -243,6 +256,7 @@ async fn process_transcription(
     start_time: Instant,
 ) -> ApiResult<Json<TranscribeResponse>> {
     // ファイルサイズの検証
+    // - アップロードサイズが設定値を超えていないかチェック
     let config = &state.config;
     let max_size = config.max_file_size_bytes();
     if file_data.len() > max_size {
@@ -257,14 +271,17 @@ async fn process_transcription(
     }
 
     // CPU集約的な処理をブロッキングスレッドで実行
+    // - デコード/リサンプリング/Whisper 推論などは重いので `spawn_blocking`
     let config_clone = Arc::clone(&state.config);
     let whisper_engine = Arc::clone(&state.whisper_engine);
 
     let processing_result = tokio::task::spawn_blocking(move || {
         // 音声プロセッサを作成
+        // - 一時ディレクトリの準備や、サポート形式/制限値の参照に利用
         let mut audio_processor = AudioProcessor::new(&config_clone)?;
 
         // ファイル形式の検証
+        // - 設定で許可した拡張子のみ受け付ける（簡易チェック）
         if !audio_processor.is_supported_format(&filename) {
             return Err(anyhow::anyhow!(
                 "サポートされていないファイル形式: {}",
@@ -273,22 +290,28 @@ async fn process_transcription(
         }
 
         // 音声データを処理
+        // - バイト列 → 一時ファイル → デコード → f32 サンプル列（ターゲット SR）
         let processed_audio = audio_processor.process_audio_from_bytes(&file_data, &filename)?;
 
         // 音声の長さを検証
+        // - 設定の最大再生時間（分）を超えていないか
         audio_processor.validate_audio_duration(&processed_audio.original_metadata)?;
 
         // 音声データの前処理
+        // - 正規化などの軽微な前処理
         let mut audio_samples = processed_audio.samples;
         preprocess_audio(&mut audio_samples);
 
         // Whisperエンジンを取得
+        // - 起動時にロードできなかった場合は None → エラー
         let engine_guard = whisper_engine.lock().unwrap();
         let engine = engine_guard
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Whisperエンジンが初期化されていません"))?;
 
         // 文字起こし実行
+        // - include_timestamps=true の場合は詳細結果（セグメント/推定言語/処理時間）
+        // - それ以外は結合テキストのみ
         let language = request.language.as_deref();
         let translate_to_english = request.translate_to_english.unwrap_or(false);
         let include_timestamps = request.include_timestamps.unwrap_or(false);
@@ -339,6 +362,7 @@ async fn process_transcription(
 
 /// 利用可能なモデル情報を取得
 pub async fn get_models(State(state): State<AppState>) -> ApiResult<Json<ModelsResponse>> {
+    // 既知のモデル定義カタログ（ファイル名/サイズ/説明等）
     let catalog = ModelCatalog::default();
     let models_dir = std::path::Path::new(&state.config.paths.models_dir);
 
@@ -366,6 +390,7 @@ pub async fn get_models(State(state): State<AppState>) -> ApiResult<Json<ModelsR
         });
     }
 
+    // 設定で選択されている既定モデル名
     let current_model = state.config.whisper.default_model.clone();
 
     Ok(Json(ModelsResponse {
@@ -384,6 +409,8 @@ pub async fn health_check(State(state): State<AppState>) -> Json<HealthResponse>
     };
 
     // メモリ使用量の取得（簡易版）
+    // - Linux: /proc/self/status から VmRSS を読み取る
+    // - その他 OS は None
     let memory_usage_mb = get_memory_usage_mb();
 
     Json(HealthResponse {
@@ -426,6 +453,7 @@ pub struct LanguageInfo {
 // =============================================================================
 
 /// メモリ使用量を取得（簡易版）
+/// - 実運用では OS ごとの実装やメトリクス送信を検討
 fn get_memory_usage_mb() -> Option<u64> {
     // Linuxの場合は/proc/self/statusから取得
     #[cfg(target_os = "linux")]
@@ -448,6 +476,7 @@ fn get_memory_usage_mb() -> Option<u64> {
 }
 
 /// CORS対応のための追加ヘッダー
+/// - OPTIONS への固定応答でプリフライトを許可
 pub async fn add_cors_headers() -> impl axum::response::IntoResponse {
     (
         [

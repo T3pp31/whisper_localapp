@@ -1,8 +1,14 @@
+//! アプリ全体の設定（モデル/音声/GUI/性能/入出力/各種パス）を管理するモジュール。
+//! - `Config::load()` でユーザー領域の設定を読み込み（なければデフォルト生成）
+//! - `Config::save()` で保存先に書き出し
+//! - `ensure_directories()` で必要なディレクトリを作成
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// アプリ全体の設定ルート。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub whisper: WhisperConfig,
@@ -13,6 +19,7 @@ pub struct Config {
     pub output: OutputConfig,
 }
 
+/// Whisper に関する設定。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WhisperConfig {
     pub model_path: String,
@@ -20,6 +27,7 @@ pub struct WhisperConfig {
     pub language: String,
 }
 
+/// 音声処理（前処理）に関する設定。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioConfig {
     pub sample_rate: u32,
@@ -27,6 +35,7 @@ pub struct AudioConfig {
     pub buffer_size: usize,
 }
 
+/// GUI 表示に関する設定。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GuiConfig {
     pub window_width: f32,
@@ -35,6 +44,7 @@ pub struct GuiConfig {
     pub theme: String,
 }
 
+/// スレッド数や GPU 使用の有無など性能関連の設定。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceConfig {
     pub audio_threads: usize,
@@ -42,6 +52,7 @@ pub struct PerformanceConfig {
     pub use_gpu: bool,
 }
 
+/// モデル/出力/一時ファイルのディレクトリ。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PathsConfig {
     pub models_dir: String,
@@ -49,6 +60,7 @@ pub struct PathsConfig {
     pub temp_dir: String,
 }
 
+/// 出力フォーマット等の設定。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutputConfig {
     pub default_format: String,
@@ -57,6 +69,7 @@ pub struct OutputConfig {
 }
 
 impl Config {
+    /// 設定をユーザー領域から読み込む。存在しなければデフォルトを作成して保存。
     pub fn load() -> Result<Self> {
         let path = Self::config_file_path();
 
@@ -79,6 +92,7 @@ impl Config {
         }
     }
 
+    /// 現在の設定をユーザー領域に保存する。
     pub fn save(&self) -> Result<()> {
         let content = toml::to_string_pretty(self)?;
         let path = Self::config_file_path();
@@ -89,6 +103,7 @@ impl Config {
         Ok(())
     }
 
+    /// 必要なディレクトリ（models/output/temp）を作成する。
     pub fn ensure_directories(&self) -> Result<()> {
         fs::create_dir_all(&self.paths.models_dir)?;
         fs::create_dir_all(&self.paths.output_dir)?;
@@ -136,7 +151,8 @@ impl Default for Config {
 }
 
 impl Config {
-    // アプリの設定保存先（ユーザー領域）: <config_dir>/whisperGUIapp/config.toml
+    /// アプリの設定保存先（ユーザー領域）。
+    /// 例: `<config_dir>/whisperGUIapp/config.toml`
     fn config_file_path() -> PathBuf {
         let base = dirs_next::config_dir().unwrap_or_else(|| PathBuf::from("."));
         base.join("whisperGUIapp").join("config.toml")
