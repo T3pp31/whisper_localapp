@@ -1,0 +1,41 @@
+# WhisperBackendAPI 設定ファイル
+
+[server]
+host = "0.0.0.0"
+port = 8080
+cors_origins = ["*"]
+max_request_size = 104857600  # 100MB
+
+[whisper]
+model_path = "models/ggml-large-v3-turbo-q5_0.bin"
+default_model = "large-v3-turbo-q5_0"
+language = "auto"
+enable_gpu = true
+
+[audio]
+sample_rate = 16000
+channels = 1
+buffer_size = 4096
+supported_formats = [
+    "wav",
+    "mp3",
+    "m4a",
+    "flac",
+    "ogg"
+]
+
+[performance]
+audio_threads = 10
+whisper_threads = 14
+max_concurrent_requests = 10
+request_timeout_seconds = 300  # 5分
+
+[paths]
+models_dir = "models"
+temp_dir = "temp"
+upload_dir = "uploads"
+
+[limits]
+max_file_size_mb = 50
+max_audio_duration_minutes = 30
+cleanup_temp_files_after_minutes = 60
