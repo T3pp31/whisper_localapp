@@ -127,7 +127,7 @@ impl Default for Config {
             },
             limits: LimitsConfig {
                 max_file_size_mb: 50,
-                max_audio_duration_minutes: 30,
+                max_audio_duration_minutes: 180,
                 cleanup_temp_files_after_minutes: 60,
             },
         }

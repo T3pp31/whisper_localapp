@@ -37,7 +37,7 @@ mod config_tests {
 
         // 制限設定
         assert_eq!(config.limits.max_file_size_mb, 50);
-        assert_eq!(config.limits.max_audio_duration_minutes, 30);
+        assert_eq!(config.limits.max_audio_duration_minutes, 180);
         assert_eq!(config.limits.cleanup_temp_files_after_minutes, 60);
     }
 
