@@ -613,7 +613,3 @@ pub async fn get_gpu_status(State(state): State<AppState>) -> ApiResult<Json<Gpu
 ## ライセンス
 
 - 本リポジトリのライセンスに従います。
-
-```
-NVCC_PREPEND_FLAGS="--std=c++14 -Wno-deprecated-gpu-targets -U_GNU_SOURCE" CMAKE_CUDA_STANDARD=14 ./build.sh gpu
-```
