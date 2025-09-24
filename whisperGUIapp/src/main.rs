@@ -440,27 +440,42 @@ async fn transcribe_via_remote(
         .to_lowercase();
 
     if ct.starts_with("application/json") {
-        let json: JsonValue = resp.json().await.map_err(|e| format!("JSON の解析に失敗しました: {}", e))?;
-        // text があれば優先
-        if let Some(t) = json.get("text").and_then(|v| v.as_str()) {
-            let segments = if let Some(arr) = json.get("segments").and_then(|v| v.as_array()) {
-                arr.len()
-            } else { 1 };
-            return Ok(TranscriptionResult { text: t.to_string(), segments });
-        }
-        // segments からテキストを再構成
-        if let Some(arr) = json.get("segments").and_then(|v| v.as_array()) {
+        let json: JsonValue = resp
+            .json()
+            .await
+            .map_err(|e| format!("JSON の解析に失敗しました: {}", e))?;
+
+        // 1) segments 優先（ローカル出力と同じ整形にするため）
+        //    - トップレベルに segments 配列があるオブジェクト
+        //    - トップレベル自体が配列（GPU サーバが配列そのものを返すケース）
+        if let Some(arr) = json.get("segments").and_then(|v| v.as_array())
+            .or_else(|| json.as_array())
+        {
             let mut lines: Vec<String> = Vec::new();
             for seg in arr {
-                let text = seg.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                // 秒 or ミリ秒のどちらかで与えられている前提で吸収
-                let (start_ms, end_ms) = if let (Some(s), Some(e)) = (seg.get("start_time_ms").and_then(|v| v.as_u64()), seg.get("end_time_ms").and_then(|v| v.as_u64())) {
+                let text = seg
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+
+                // 秒 or ミリ秒どちらでも吸収
+                let (start_ms, end_ms) = if let (Some(s), Some(e)) = (
+                    seg.get("start_time_ms").and_then(|v| v.as_u64()),
+                    seg.get("end_time_ms").and_then(|v| v.as_u64()),
+                ) {
                     (s, e)
                 } else {
-                    let s = seg.get("start").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                    let e = seg.get("end").and_then(|v| v.as_f64()).unwrap_or(s);
+                    let s = seg
+                        .get("start")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0);
+                    let e = seg
+                        .get("end")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(s);
                     ((s * 1000.0) as u64, (e * 1000.0) as u64)
                 };
+
                 lines.push(format!(
                     "[{} --> {}] {}",
                     format_timestamp_ms(start_ms),
@@ -471,7 +486,13 @@ async fn transcribe_via_remote(
             let text = lines.join("\n");
             return Ok(TranscriptionResult { text, segments: arr.len() });
         }
-        // それ以外の JSON は文字列化
+
+        // 2) フォールバック: text があればそれを利用
+        if let Some(t) = json.get("text").and_then(|v| v.as_str()) {
+            return Ok(TranscriptionResult { text: t.to_string(), segments: 1 });
+        }
+
+        // 3) それ以外の JSON は文字列化
         let text = json.to_string();
         return Ok(TranscriptionResult { text, segments: 1 });
     } else {
