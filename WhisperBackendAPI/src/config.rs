@@ -108,6 +108,7 @@ impl Default for Config {
                 supported_formats: vec![
                     "wav".to_string(),
                     "mp3".to_string(),
+                    "mp4".to_string(),
                     "m4a".to_string(),
                     "flac".to_string(),
                     "ogg".to_string(),

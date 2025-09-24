@@ -40,17 +40,34 @@ impl WhisperEngine {
         }
 
         // Whisperコンテキストの初期化
-        let ctx_params = WhisperContextParameters::default();
+        let mut ctx_params = WhisperContextParameters::default();
 
-        // GPU使用の設定
-        // - whisper-rs のバージョンにより可否が異なるため、ここではフラグのみ保持
-        if config.whisper.enable_gpu {
-            // GPU関連の設定があれば追加
-            // ctx_params.use_gpu = true; // whisper-rsのバージョンによって異なる
-        }
+        // GPU使用の設定（whisper-rs/whisper.cpp 側が対応していれば有効化）
+        // - 実際にGPUコードが使われるかはビルド時のバックエンド有効化に依存します
+        //   例: CUDA (cuBLAS) を使う場合は `WHISPER_CUBLAS=1` 等のフラグでビルド
+        ctx_params.use_gpu = config.whisper.enable_gpu;
 
-        let context = WhisperContext::new_with_params(model_path, ctx_params)
-            .map_err(|e| anyhow::anyhow!("Whisperコンテキストの初期化に失敗: {}", e))?;
+        // コンテキスト作成（GPU有効時に失敗した場合はCPUでフォールバック）
+        let context = match WhisperContext::new_with_params(model_path, ctx_params) {
+            Ok(ctx) => ctx,
+            Err(e) => {
+                if config.whisper.enable_gpu {
+                    eprintln!(
+                        "GPU初期化に失敗しました。CPUで再試行します: {}",
+                        e
+                    );
+                    let mut cpu_params = WhisperContextParameters::default();
+                    cpu_params.use_gpu = false;
+                    WhisperContext::new_with_params(model_path, cpu_params)
+                        .map_err(|e| anyhow::anyhow!("Whisperコンテキストの初期化に失敗: {}", e))?
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "Whisperコンテキストの初期化に失敗: {}",
+                        e
+                    ));
+                }
+            }
+        };
 
         let language = match config.whisper.language.trim() {
             "" => None,
@@ -58,7 +75,11 @@ impl WhisperEngine {
             lang => Some(lang.to_string()),
         };
 
-        println!("Whisperモデルを読み込みました: {}", model_path);
+        println!(
+            "Whisperモデルを読み込みました: {} (GPU: {})",
+            model_path,
+            if config.whisper.enable_gpu { "enabled" } else { "disabled" }
+        );
 
         Ok(Self {
             context: Arc::new(context),

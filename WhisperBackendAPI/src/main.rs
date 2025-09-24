@@ -18,6 +18,7 @@ use axum::{
     routing::{get, post, options},
     Router,
 };
+use axum::extract::DefaultBodyLimit;
 use std::net::SocketAddr;
 use tower::ServiceBuilder;
 use tower_http::cors::{Any, CorsLayer};
@@ -100,6 +101,8 @@ async fn main() -> anyhow::Result<()> {
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
                 .layer(cors)
+                // 本文サイズの上限（multipart 含む）を設定
+                .layer(DefaultBodyLimit::max(config.server.max_request_size))
         )
 
         // アプリケーション状態の共有

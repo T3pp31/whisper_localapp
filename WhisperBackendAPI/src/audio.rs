@@ -310,6 +310,13 @@ impl AudioProcessor {
             .map(|s| s.to_lowercase())
             .unwrap_or_default();
 
+        // mp4 はコンテナであり、実体は m4a(AAC) 等の音声を含むことが多い。
+        // 既存の設定に mp4 が無い場合でも、m4a が許可されていれば mp4 も許可する。
+        if extension == "mp4" {
+            return self.config.audio.supported_formats.contains(&"mp4".to_string())
+                || self.config.audio.supported_formats.contains(&"m4a".to_string());
+        }
+
         self.config.audio.supported_formats.contains(&extension)
     }
 
