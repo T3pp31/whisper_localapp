@@ -19,6 +19,7 @@ class WhisperApp {
 
         this.audio = new Audio();
         this.audio.preload = 'auto';
+        this.audio.autoplay = false; // 自動再生を無効化
         this._blobUrl = null;
         this._triedBlobFallback = false;
         this._playbackPath = null; // 実際に再生に使うファイルパス（プレビュー等）
@@ -681,10 +682,8 @@ class WhisperApp {
                 this.audio.src = this._blobUrl;
                 try { this.audio.load(); } catch (_) {}
                 this.addLog(`audio: src set (blob) -> ${mime}`);
-                try {
-                    await this.audio.play();
-                    this.playPauseBtn.textContent = '⏸';
-                } catch (_) {}
+                // 自動再生しない（ユーザー操作でのみ再生）
+                this.playPauseBtn.textContent = '▶';
                 return true;
             } catch (e) {
                 this.addLog(`Blob 生成エラー: ${e}`);
