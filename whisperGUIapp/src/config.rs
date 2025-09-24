@@ -25,6 +25,12 @@ pub struct WhisperConfig {
     pub model_path: String,
     pub default_model: String,
     pub language: String,
+    #[serde(default)]
+    pub use_remote_server: bool,
+    #[serde(default = "default_remote_server_url")]
+    pub remote_server_url: String,
+    #[serde(default = "default_remote_server_endpoint")]
+    pub remote_server_endpoint: String,
 }
 
 /// 音声処理（前処理）に関する設定。
@@ -119,6 +125,9 @@ impl Default for Config {
                 model_path: "models/ggml-base.bin".to_string(),
                 default_model: "base".to_string(),
                 language: "ja".to_string(),
+                use_remote_server: false,
+                remote_server_url: default_remote_server_url(),
+                remote_server_endpoint: default_remote_server_endpoint(),
             },
             audio: AudioConfig {
                 sample_rate: 16000,
@@ -157,4 +166,12 @@ impl Config {
         let base = dirs_next::config_dir().unwrap_or_else(|| PathBuf::from("."));
         base.join("whisperGUIapp").join("config.toml")
     }
+}
+
+fn default_remote_server_url() -> String {
+    "http://127.0.0.1:8080".to_string()
+}
+
+fn default_remote_server_endpoint() -> String {
+    "/transcribe-with-timestamps".to_string()
 }

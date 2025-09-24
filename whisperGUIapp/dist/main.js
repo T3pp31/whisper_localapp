@@ -11,6 +11,11 @@ class WhisperApp {
         this.isClickPlay = false;
         this.selectedLanguage = 'ja';
         this.translateToEnglish = false;
+        this.useRemoteServer = false;
+        this.serverUrl = '';
+        this.serverEndpoint = '';
+        this.currentWhisperThreads = null;
+        this.maxThreads = null;
 
         this.audio = new Audio();
         this.audio.preload = 'auto';
@@ -23,6 +28,8 @@ class WhisperApp {
         this.initializeElements();
         this.attachEventListeners();
         this.loadAvailableModels();
+        this.loadRemoteServerSettings();
+        this.loadPerformanceSettings();
         this.addLog('準備完了');
     }
 
@@ -50,6 +57,8 @@ class WhisperApp {
         this.downloadProgressText = document.getElementById('download-progress-text');
         this.languageSelect = document.getElementById('language-select');
         this.translateToggle = document.getElementById('translate-toggle');
+        this.useGpuServerToggle = document.getElementById('use-gpu-server-toggle');
+        this.serverUrlInput = document.getElementById('server-url-input');
         this.startTranscriptionBtn = document.getElementById('start-transcription');
         this.editModeToggle = document.getElementById('edit-mode-toggle');
         this.clickPlayToggle = document.getElementById('click-play-toggle');
@@ -57,6 +66,9 @@ class WhisperApp {
         this.clearResultsBtn = document.getElementById('clear-results');
         this.transcriptionResults = document.getElementById('transcription-results');
         this.logContainer = document.getElementById('log-container');
+        this.serverEndpointInput = document.getElementById('server-endpoint-input');
+        this.cpuThreadsInput = document.getElementById('cpu-threads-input');
+        this.cpuThreadsMaxEl = document.getElementById('cpu-threads-max');
     }
 
     _bindDownloadEvents() {
@@ -123,6 +135,32 @@ class WhisperApp {
         }
         this.languageSelect.addEventListener('change', (e) => this.changeLanguage(e.target.value));
         this.translateToggle.addEventListener('change', (e) => this.toggleTranslation(e.target.checked));
+        if (this.useGpuServerToggle) {
+            this.useGpuServerToggle.addEventListener('change', async (e) => {
+                this.useRemoteServer = !!e.target.checked;
+                await this.updateRemoteServerSettings();
+                this.applyRemoteUiState();
+                this.addLog(`GPUサーバ: ${this.useRemoteServer ? 'ON' : 'OFF'}`);
+            });
+        }
+        if (this.serverUrlInput) {
+            const handler = async () => {
+                this.serverUrl = (this.serverUrlInput.value || '').trim();
+                await this.updateRemoteServerSettings();
+                this.addLog(`GPUサーバURLを更新: ${this.serverUrl || '(未設定)'}`);
+            };
+            this.serverUrlInput.addEventListener('change', handler);
+            this.serverUrlInput.addEventListener('blur', handler);
+        }
+        if (this.serverEndpointInput) {
+            const handlerEp = async () => {
+                this.serverEndpoint = (this.serverEndpointInput.value || '').trim();
+                await this.updateRemoteServerSettings();
+                this.addLog(`エンドポイントを更新: ${this.serverEndpoint || '(未設定)'}`);
+            };
+            this.serverEndpointInput.addEventListener('change', handlerEp);
+            this.serverEndpointInput.addEventListener('blur', handlerEp);
+        }
         this.startTranscriptionBtn.addEventListener('click', () => this.startTranscription());
         this.editModeToggle.addEventListener('change', (e) => this.toggleEditMode(e.target.checked));
         this.clickPlayToggle.addEventListener('change', (e) => this.toggleClickPlay(e.target.checked));
@@ -141,6 +179,49 @@ class WhisperApp {
         // 文字起こし範囲スライダー
         this.startRangeSlider.addEventListener('input', (e) => this.updateStartTime(e.target.value));
         this.endRangeSlider.addEventListener('input', (e) => this.updateEndTime(e.target.value));
+
+        // CPU スレッド数の変更
+        if (this.cpuThreadsInput) {
+            const handlerThreads = async () => {
+                let v = Number(this.cpuThreadsInput.value || 0);
+                if (!Number.isFinite(v) || v <= 0) v = 1;
+                const max = this.maxThreads || 1;
+                const clamped = Math.max(1, Math.min(max, Math.floor(v)));
+                if (clamped !== v) {
+                    this.cpuThreadsInput.value = String(clamped);
+                }
+                try {
+                    await invoke('update_whisper_threads', { threads: clamped });
+                    this.currentWhisperThreads = clamped;
+                    this.addLog(`使用CPU数を ${clamped} に設定しました`);
+                } catch (e) {
+                    this.addLog(`CPU数の更新に失敗しました: ${e}`);
+                }
+            };
+            this.cpuThreadsInput.addEventListener('change', handlerThreads);
+            this.cpuThreadsInput.addEventListener('blur', handlerThreads);
+        }
+    }
+
+    async loadPerformanceSettings() {
+        try {
+            const info = await invoke('get_performance_info');
+            const wt = (info && typeof info.whisperThreads !== 'undefined') ? info.whisperThreads : info.whisper_threads;
+            const mt = (info && typeof info.maxThreads !== 'undefined') ? info.maxThreads : info.max_threads;
+            this.currentWhisperThreads = Number(wt) || 1;
+            this.maxThreads = Number(mt) || 1;
+            if (this.cpuThreadsInput) {
+                this.cpuThreadsInput.min = 1;
+                this.cpuThreadsInput.max = String(this.maxThreads);
+                this.cpuThreadsInput.value = String(this.currentWhisperThreads);
+            }
+            if (this.cpuThreadsMaxEl) {
+                this.cpuThreadsMaxEl.textContent = `最大: ${this.maxThreads}`;
+            }
+            this.addLog(`CPU情報: 現在 ${this.currentWhisperThreads} / 最大 ${this.maxThreads}`);
+        } catch (e) {
+            this.addLog(`CPU情報の取得に失敗しました: ${e}`);
+        }
     }
 
     async browseAudioFile() {
@@ -341,6 +422,19 @@ class WhisperApp {
             return;
         }
 
+        if (this.useRemoteServer) {
+            const url = (this.serverUrl || '').trim();
+            if (!url) {
+                this.addLog('GPUサーバURLを入力してください (例: http://192.168.0.1:8080)');
+                return;
+            }
+            const ep = (this.serverEndpoint || '').trim();
+            if (!ep) {
+                this.addLog('エンドポイントを入力してください (例: /transcribe-with-timestamps)');
+                return;
+            }
+        }
+
         if (this.isTranscribing) {
             this.addLog('既に文字起こし中です');
             return;
@@ -368,6 +462,50 @@ class WhisperApp {
             this.startTranscriptionBtn.disabled = false;
             this.startTranscriptionBtn.textContent = '文字起こし開始';
         }
+    }
+
+    async loadRemoteServerSettings() {
+        try {
+            const s = await invoke('get_remote_server_settings');
+            if (s && typeof s === 'object') {
+                this.useRemoteServer = !!s.useRemoteServer || !!s.use_remote_server;
+                this.serverUrl = s.remoteServerUrl || s.remote_server_url || '';
+                this.serverEndpoint = s.remoteServerEndpoint || s.remote_server_endpoint || '';
+            }
+        } catch (_) {}
+        // 反映
+        if (this.useGpuServerToggle) this.useGpuServerToggle.checked = !!this.useRemoteServer;
+        if (this.serverUrlInput) this.serverUrlInput.value = this.serverUrl || '';
+        if (this.serverEndpointInput) this.serverEndpointInput.value = this.serverEndpoint || '';
+        this.applyRemoteUiState();
+    }
+
+    async updateRemoteServerSettings() {
+        try {
+            await invoke('update_remote_server_settings', {
+                useRemoteServer: !!this.useRemoteServer,
+                remoteServerUrl: (this.serverUrl || '').trim(),
+                remoteServerEndpoint: (this.serverEndpoint || '').trim()
+            });
+        } catch (error) {
+            this.addLog(`GPUサーバ設定の更新に失敗しました: ${error}`);
+        }
+    }
+
+    applyRemoteUiState() {
+        const disabled = !!this.useRemoteServer;
+        const widgets = [
+            this.modelSelect,
+            this.switchModelButton,
+            this.downloadModelButton,
+            this.downloadAllButton,
+            this.browseModelButton,
+            this.updateModelButton,
+            this.modelPathInput
+        ];
+        widgets.forEach(w => { if (w) w.disabled = disabled; });
+        if (this.serverUrlInput) this.serverUrlInput.disabled = false; // 入力は常に可能
+        if (this.serverEndpointInput) this.serverEndpointInput.disabled = false; // 入力は常に可能
     }
 
     toggleEditMode(enabled) {

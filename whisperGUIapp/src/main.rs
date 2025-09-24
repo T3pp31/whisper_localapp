@@ -23,6 +23,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::{ClipboardManager, Manager, State};
 use std::io::{Read, Write};
+use reqwest::header::CONTENT_TYPE;
+use serde_json::Value as JsonValue;
 
 /// Tauri 側で共有するアプリの状態。
 /// - `config`: 現在のアプリ設定
@@ -57,6 +59,21 @@ struct AudioMetadataResponse {
 struct TranscriptionResult {
     text: String,
     segments: usize,
+}
+
+/// リモート GPU サーバ設定のシリアライズ用。
+#[derive(Serialize, Deserialize)]
+struct RemoteServerSettings {
+    use_remote_server: bool,
+    remote_server_url: String,
+    remote_server_endpoint: String,
+}
+
+/// パフォーマンス設定（スレッド数など）の返却用。
+#[derive(Serialize, Deserialize)]
+struct PerformanceInfo {
+    whisper_threads: usize,
+    max_threads: usize,
 }
 
 /// モデル一覧表示用の情報。
@@ -166,6 +183,60 @@ async fn update_language_setting(language: String, state: State<'_, AppState>) -
     Ok(())
 }
 
+/// 現在のパフォーマンス設定（Whisper スレッド数）と利用可能な最大スレッド数を返す。
+#[tauri::command]
+fn get_performance_info(state: State<'_, AppState>) -> Result<PerformanceInfo, String> {
+    let cfg = state
+        .config
+        .lock()
+        .map_err(|_| "設定の読み込みに失敗しました")?;
+
+    let max_threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .max(1);
+
+    let wt = cfg.performance.whisper_threads.clamp(1, max_threads);
+    Ok(PerformanceInfo {
+        whisper_threads: wt,
+        max_threads,
+    })
+}
+
+/// Whisper のスレッド数を更新し、エンジンをリセットする。
+#[tauri::command]
+async fn update_whisper_threads(threads: usize, state: State<'_, AppState>) -> Result<(), String> {
+    let max_threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .max(1);
+    let clamped = threads.clamp(1, max_threads);
+
+    // 設定を更新
+    {
+        let mut cfg = state
+            .config
+            .lock()
+            .map_err(|_| "設定の更新に失敗しました")?;
+        cfg.performance.whisper_threads = clamped;
+
+        #[cfg(not(debug_assertions))]
+        {
+            cfg.save()
+                .map_err(|e| format!("設定の保存に失敗しました: {}", e))?;
+        }
+    }
+
+    // Whisper エンジンをリセット（次回実行時に新設定で初期化）
+    let mut engine = state
+        .whisper_engine
+        .lock()
+        .map_err(|_| "エンジンのリセットに失敗しました")?;
+    *engine = None;
+
+    Ok(())
+}
+
 /// 指定音声の文字起こしを実行。言語・翻訳有無を受け取り、
 /// タイムスタンプ付きセグメントを結合したテキストを返す。
 #[tauri::command]
@@ -179,6 +250,18 @@ async fn start_transcription(
         let config = state.config.lock().map_err(|_| "設定の読み込みに失敗しました")?;
         config.clone()
     };
+
+    // リモート GPU サーバを利用する場合は HTTP 経由で実行
+    if config_snapshot.whisper.use_remote_server {
+        return transcribe_via_remote(
+            &audio_path,
+            &language,
+            translate_to_english,
+            &config_snapshot.whisper.remote_server_url,
+            &config_snapshot.whisper.remote_server_endpoint,
+            &config_snapshot,
+        ).await;
+    }
 
     // 音声ファイルの読み込み
     let mut processor = AudioProcessor::new(&config_snapshot)
@@ -245,6 +328,208 @@ async fn start_transcription(
         text,
         segments: segments.len(),
     })
+}
+
+/// リモート GPU サーバへ音声ファイルを送信してタイムスタンプ付き文字起こしを取得。
+async fn transcribe_via_remote(
+    audio_path: &str,
+    language: &str,
+    translate_to_english: bool,
+    base_url: &str,
+    endpoint_path: &str,
+    config: &Config,
+) -> Result<TranscriptionResult, String> {
+    // エンドポイントを組み立て（endpoint が絶対URLなら優先）
+    let endpoint_trimmed = endpoint_path.trim();
+    let endpoint_full = if endpoint_trimmed.starts_with("http://") || endpoint_trimmed.starts_with("https://") {
+        endpoint_trimmed.to_string()
+    } else {
+        let base = base_url.trim().trim_end_matches('/');
+        let ep_owned = if endpoint_trimmed.starts_with('/') {
+            endpoint_trimmed.to_string()
+        } else {
+            format!("/{}", endpoint_trimmed)
+        };
+        format!("{}{}", base, ep_owned)
+    };
+
+    // サーバ許容拡張子チェック（wav / mp3 / m4a / flac / ogg）。
+    // 非対応の場合は一時WAVへ変換して送信。
+    let allowed_exts = ["wav", "mp3", "m4a", "flac", "ogg"];
+    let orig_path = std::path::Path::new(audio_path);
+    let ext_ok = orig_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| allowed_exts.contains(&s.to_lowercase().as_str()))
+        .unwrap_or(false);
+
+    // 変換先のアップロードパスを決定
+    let upload_path: std::path::PathBuf = if ext_ok {
+        orig_path.to_path_buf()
+    } else {
+        // temp ディレクトリを解決
+        let mut temp_dir = std::path::PathBuf::from(&config.paths.temp_dir);
+        if temp_dir.is_relative() {
+            let base = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")));
+            temp_dir = base.join(temp_dir);
+        }
+        std::fs::create_dir_all(&temp_dir)
+            .map_err(|e| format!("一時ディレクトリの作成に失敗しました: {}", e))?;
+
+        let target = temp_dir.join("remote_upload.wav");
+        // 変換実施
+        let mut processor = AudioProcessor::new(config)
+            .map_err(|e| format!("オーディオ処理の初期化に失敗しました: {}", e))?;
+        processor
+            .decode_to_wav_file(audio_path, &target.to_string_lossy())
+            .map_err(|e| format!("GPUサーバ用のWAV変換に失敗しました: {}", e))?;
+        target
+    };
+
+    // ファイルを読み込んで固定長のバイト列として送信（curl に近い挙動）
+    let bytes = std::fs::read(&upload_path)
+        .map_err(|e| format!("音声ファイルの読み込みに失敗しました: {}", e))?;
+    let filename = upload_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("audio");
+
+    // multipart フォームを構築（MIME を簡易推定）
+    // curl の既定に合わせて application/octet-stream を強制
+    let mut file_part = reqwest::multipart::Part::bytes(bytes)
+        .file_name(filename.to_string());
+    let _ = {
+        file_part = file_part.mime_str("application/octet-stream")
+            .map_err(|e| format!("MIME設定に失敗しました: {}", e))?;
+        &file_part
+    };
+    let mut form = reqwest::multipart::Form::new()
+        .part("file", file_part)
+        .text("translate_to_english", if translate_to_english { "true" } else { "false" }.to_string());
+    let lang_trim = language.trim();
+    if !lang_trim.is_empty() && lang_trim != "auto" {
+        form = form.text("language", lang_trim.to_string());
+    }
+
+    // リクエスト送信
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&endpoint_full)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| format!("GPUサーバへの接続に失敗しました: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let mut snippet = body.trim().to_string();
+        if snippet.len() > 500 { snippet.truncate(500); snippet.push_str(" …"); }
+        return Err(format!("GPUサーバがエラーを返しました: HTTP {} {} -> {}", status, endpoint_full, snippet));
+    }
+
+    // 応答解析: JSONの場合は text/segments を解釈。非JSONはテキストとして採用。
+    let ct = resp
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_lowercase();
+
+    if ct.starts_with("application/json") {
+        let json: JsonValue = resp.json().await.map_err(|e| format!("JSON の解析に失敗しました: {}", e))?;
+        // text があれば優先
+        if let Some(t) = json.get("text").and_then(|v| v.as_str()) {
+            let segments = if let Some(arr) = json.get("segments").and_then(|v| v.as_array()) {
+                arr.len()
+            } else { 1 };
+            return Ok(TranscriptionResult { text: t.to_string(), segments });
+        }
+        // segments からテキストを再構成
+        if let Some(arr) = json.get("segments").and_then(|v| v.as_array()) {
+            let mut lines: Vec<String> = Vec::new();
+            for seg in arr {
+                let text = seg.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                // 秒 or ミリ秒のどちらかで与えられている前提で吸収
+                let (start_ms, end_ms) = if let (Some(s), Some(e)) = (seg.get("start_time_ms").and_then(|v| v.as_u64()), seg.get("end_time_ms").and_then(|v| v.as_u64())) {
+                    (s, e)
+                } else {
+                    let s = seg.get("start").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let e = seg.get("end").and_then(|v| v.as_f64()).unwrap_or(s);
+                    ((s * 1000.0) as u64, (e * 1000.0) as u64)
+                };
+                lines.push(format!(
+                    "[{} --> {}] {}",
+                    format_timestamp_ms(start_ms),
+                    format_timestamp_ms(end_ms),
+                    text
+                ));
+            }
+            let text = lines.join("\n");
+            return Ok(TranscriptionResult { text, segments: arr.len() });
+        }
+        // それ以外の JSON は文字列化
+        let text = json.to_string();
+        return Ok(TranscriptionResult { text, segments: 1 });
+    } else {
+        let body = resp.text().await.map_err(|e| format!("応答読み取りに失敗しました: {}", e))?;
+        // セグメント数は大まかに行数で推定
+        let segments = body.lines().filter(|l| !l.trim().is_empty()).count();
+        let segments = if segments == 0 { 1 } else { segments };
+        return Ok(TranscriptionResult { text: body, segments });
+    }
+}
+
+fn guess_mime_from_filename(name: &str) -> Option<String> {
+    let lower = name.to_lowercase();
+    let m = if lower.ends_with(".wav") {
+        "audio/wav"
+    } else if lower.ends_with(".mp3") {
+        "audio/mpeg"
+    } else if lower.ends_with(".m4a") || lower.ends_with(".mp4") || lower.ends_with(".aac") {
+        "audio/mp4"
+    } else if lower.ends_with(".ogg") || lower.ends_with(".oga") {
+        "audio/ogg"
+    } else if lower.ends_with(".flac") {
+        "audio/flac"
+    } else {
+        "application/octet-stream"
+    };
+    Some(m.to_string())
+}
+
+/// リモート GPU サーバ設定の取得。
+#[tauri::command]
+fn get_remote_server_settings(state: State<'_, AppState>) -> Result<RemoteServerSettings, String> {
+    let cfg = state.config.lock().map_err(|_| "設定の読み込みに失敗しました")?;
+    Ok(RemoteServerSettings {
+        use_remote_server: cfg.whisper.use_remote_server,
+        remote_server_url: cfg.whisper.remote_server_url.clone(),
+        remote_server_endpoint: cfg.whisper.remote_server_endpoint.clone(),
+    })
+}
+
+/// リモート GPU サーバ設定の更新（保存し、ローカルエンジンをリセット）。
+#[tauri::command]
+async fn update_remote_server_settings(use_remote_server: bool, remote_server_url: String, remote_server_endpoint: String, state: State<'_, AppState>) -> Result<(), String> {
+    // URL は空白をトリム
+    let url = remote_server_url.trim().to_string();
+    let ep = remote_server_endpoint.trim().to_string();
+    let mut cfg = state.config.lock().map_err(|_| "設定の更新に失敗しました")?;
+    cfg.whisper.use_remote_server = use_remote_server;
+    if !url.is_empty() { cfg.whisper.remote_server_url = url; }
+    if !ep.is_empty() { cfg.whisper.remote_server_endpoint = ep; }
+    #[cfg(not(debug_assertions))]
+    {
+        cfg.save().map_err(|e| format!("設定の保存に失敗しました: {}", e))?;
+    }
+    // ローカルエンジンは未使用/切替のため破棄
+    let mut engine = state.whisper_engine.lock().map_err(|_| "エンジンのリセットに失敗しました")?;
+    *engine = None;
+    Ok(())
 }
 
 /// 結果テキストをクリップボードへコピー。
@@ -602,7 +887,11 @@ fn main() {
             load_audio_metadata,
             prepare_preview_wav,
             update_language_setting,
+            get_performance_info,
+            update_whisper_threads,
             start_transcription,
+            get_remote_server_settings,
+            update_remote_server_settings,
             copy_to_clipboard,
             get_available_models,
             select_model,
