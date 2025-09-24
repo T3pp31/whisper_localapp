@@ -30,7 +30,7 @@ pub struct TranscribeResponse {
     pub processing_time_ms: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
     /// 論理名（UI 表示向け）
     pub name: String,

@@ -442,7 +442,147 @@ pub async fn get_languages() -> Json<Vec<LanguageInfo>> {
     Json(languages)
 }
 
+/// GPU状態の確認
+pub async fn get_gpu_status(State(state): State<AppState>) -> ApiResult<Json<GpuStatusResponse>> {
+    let (gpu_enabled, model_info) = {
+        let engine_guard = state.whisper_engine.lock().unwrap();
+        if let Some(engine) = engine_guard.as_ref() {
+            let info = engine.get_model_info();
+            (info.enable_gpu, Some(info))
+        } else {
+            (false, None)
+        }
+    };
+
+    // 環境変数の確認
+    let whisper_cublas = std::env::var("WHISPER_CUBLAS").unwrap_or_default();
+    let whisper_opencl = std::env::var("WHISPER_OPENCL").unwrap_or_default();
+    let cuda_path = std::env::var("CUDA_PATH").ok();
+
+    // コンパイル時フィーチャーの確認
+    let cuda_feature_enabled = cfg!(feature = "cuda");
+    let opencl_feature_enabled = cfg!(feature = "opencl");
+
+    // GPU関連ライブラリの検出を試行
+    let gpu_library_info = detect_gpu_libraries();
+
+    let status = GpuStatusResponse {
+        gpu_enabled_in_config: state.config.whisper.enable_gpu,
+        gpu_actually_enabled: gpu_enabled,
+        model_info,
+        environment: GpuEnvironmentInfo {
+            whisper_cublas: whisper_cublas == "1",
+            whisper_opencl: whisper_opencl == "1",
+            cuda_path,
+            cuda_feature_enabled,
+            opencl_feature_enabled,
+        },
+        gpu_library_info,
+        recommendations: generate_gpu_recommendations(&state.config, gpu_enabled),
+    };
+
+    Ok(Json(status))
+}
+
 #[derive(serde::Serialize)]
+pub struct GpuStatusResponse {
+    pub gpu_enabled_in_config: bool,
+    pub gpu_actually_enabled: bool,
+    pub model_info: Option<crate::whisper::ModelInfo>,
+    pub environment: GpuEnvironmentInfo,
+    pub gpu_library_info: GpuLibraryInfo,
+    pub recommendations: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct GpuEnvironmentInfo {
+    pub whisper_cublas: bool,
+    pub whisper_opencl: bool,
+    pub cuda_path: Option<String>,
+    pub cuda_feature_enabled: bool,
+    pub opencl_feature_enabled: bool,
+}
+
+#[derive(serde::Serialize)]
+pub struct GpuLibraryInfo {
+    pub cuda_runtime_detected: bool,
+    pub cublas_detected: bool,
+    pub opencl_detected: bool,
+    pub detection_notes: Vec<String>,
+}
+
+pub fn detect_gpu_libraries() -> GpuLibraryInfo {
+    let mut notes = Vec::new();
+    let mut cuda_runtime_detected = false;
+    let mut cublas_detected = false;
+    let mut opencl_detected = false;
+
+    // CUDA Runtime検出
+    #[cfg(target_os = "linux")]
+    {
+        if std::path::Path::new("/usr/local/cuda/lib64/libcudart.so").exists() ||
+           std::path::Path::new("/usr/lib/x86_64-linux-gnu/libcudart.so").exists() {
+            cuda_runtime_detected = true;
+            notes.push("CUDA Runtime library found".to_string());
+        } else {
+            notes.push("CUDA Runtime library not found".to_string());
+        }
+
+        // cuBLAS検出
+        if std::path::Path::new("/usr/local/cuda/lib64/libcublas.so").exists() ||
+           std::path::Path::new("/usr/lib/x86_64-linux-gnu/libcublas.so").exists() {
+            cublas_detected = true;
+            notes.push("cuBLAS library found".to_string());
+        } else {
+            notes.push("cuBLAS library not found".to_string());
+        }
+
+        // OpenCL検出
+        if std::path::Path::new("/usr/lib/x86_64-linux-gnu/libOpenCL.so").exists() {
+            opencl_detected = true;
+            notes.push("OpenCL library found".to_string());
+        } else {
+            notes.push("OpenCL library not found".to_string());
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        notes.push("GPU library detection not implemented for this platform".to_string());
+    }
+
+    GpuLibraryInfo {
+        cuda_runtime_detected,
+        cublas_detected,
+        opencl_detected,
+        detection_notes: notes,
+    }
+}
+
+pub fn generate_gpu_recommendations(config: &Config, gpu_actually_enabled: bool) -> Vec<String> {
+    let mut recommendations = Vec::new();
+
+    if config.whisper.enable_gpu && !gpu_actually_enabled {
+        recommendations.push("GPUが設定で有効化されているが実際には使用されていません".to_string());
+
+        if std::env::var("WHISPER_CUBLAS").unwrap_or_default() != "1" {
+            recommendations.push("WHISPER_CUBLAS=1 環境変数を設定してリビルドしてください".to_string());
+        }
+
+        recommendations.push("以下のコマンドでリビルドを試してください: WHISPER_CUBLAS=1 cargo build --release".to_string());
+        recommendations.push("CUDAツールキットがインストールされているか確認してください".to_string());
+        // 実際にはCPU処理になる旨も明記
+        recommendations.push("CPU処理で動作しています".to_string());
+    } else if gpu_actually_enabled {
+        recommendations.push("GPU加速が正常に有効化されています".to_string());
+    } else {
+        recommendations.push("CPU処理で動作しています".to_string());
+    }
+
+    recommendations
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct LanguageInfo {
     pub code: String,
     pub name: String,
@@ -454,7 +594,7 @@ pub struct LanguageInfo {
 
 /// メモリ使用量を取得（簡易版）
 /// - 実運用では OS ごとの実装やメトリクス送信を検討
-fn get_memory_usage_mb() -> Option<u64> {
+pub fn get_memory_usage_mb() -> Option<u64> {
     // Linuxの場合は/proc/self/statusから取得
     #[cfg(target_os = "linux")]
     {

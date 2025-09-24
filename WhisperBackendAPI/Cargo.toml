@@ -13,7 +13,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 # Whisper integration
-whisper-rs = "0.11"
+whisper-rs = { version = "0.11", optional = true }
 
 # Error handling
 anyhow = "1.0"
@@ -38,6 +38,13 @@ crossbeam-channel = "0.5"
 env_logger = "0.11"
 tower = { version = "0.4", features = ["full"] }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# Features
+[features]
+default = ["whisper"]
+whisper = ["whisper-rs"]
+cuda = ["whisper-rs/cuda"]
+opencl = ["whisper-rs/opencl"]
 
 [profile.release]
 opt-level = 3

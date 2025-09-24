@@ -87,6 +87,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/languages", get(handlers::get_languages))
         .route("/health", get(handlers::health_check))
         .route("/stats", get(handlers::get_stats))
+        .route("/gpu-status", get(handlers::get_gpu_status))
 
         // CORS プリフライトリクエスト対応
         .route("/transcribe", options(add_cors_headers))
@@ -95,6 +96,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/languages", options(add_cors_headers))
         .route("/health", options(add_cors_headers))
         .route("/stats", options(add_cors_headers))
+        .route("/gpu-status", options(add_cors_headers))
 
         // ミドルウェアの追加
         .layer(
@@ -122,6 +124,7 @@ async fn main() -> anyhow::Result<()> {
     println!("  GET  /languages - サポートされている言語一覧");
     println!("  GET  /health - ヘルスチェック");
     println!("  GET  /stats - サーバー統計情報");
+    println!("  GET  /gpu-status - GPU使用状態の詳細情報");
     println!();
     println!("使用例:");
     println!("  curl -F \"file=@audio.wav\" http://{}/transcribe", addr);

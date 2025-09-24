@@ -449,21 +449,34 @@ pub fn detect_audio_format<P: AsRef<Path>>(file_path: P) -> Result<String> {
         // ファイルの先頭バイトから形式を推測
         let mut file = File::open(path)?;
         let mut buffer = [0u8; 12];
-        std::io::Read::read_exact(&mut file, &mut buffer)?;
+        let n = std::io::Read::read(&mut file, &mut buffer)?;
 
-        if &buffer[0..4] == b"RIFF" && &buffer[8..12] == b"WAVE" {
-            Ok("wav".to_string())
-        } else if &buffer[0..3] == b"ID3" || &buffer[0..2] == [0xFF, 0xFB] {
-            Ok("mp3".to_string())
-        } else if &buffer[4..8] == b"ftyp" {
-            Ok("m4a".to_string())
-        } else if &buffer[0..4] == b"fLaC" {
-            Ok("flac".to_string())
-        } else if &buffer[0..4] == b"OggS" {
-            Ok("ogg".to_string())
-        } else {
-            Err(anyhow::anyhow!("不明な音声フォーマットです"))
+        // WAV: needs at least 12 bytes ("RIFF....WAVE")
+        if n >= 12 && &buffer[0..4] == b"RIFF" && &buffer[8..12] == b"WAVE" {
+            return Ok("wav".to_string());
         }
+
+        // MP3: ID3 tag ("ID3") or frame sync (0xFF, 0xFB)
+        if (n >= 3 && &buffer[0..3] == b"ID3") || (n >= 2 && &buffer[0..2] == [0xFF, 0xFB]) {
+            return Ok("mp3".to_string());
+        }
+
+        // M4A/MP4: "ftyp" at offset 4
+        if n >= 8 && &buffer[4..8] == b"ftyp" {
+            return Ok("m4a".to_string());
+        }
+
+        // FLAC: "fLaC"
+        if n >= 4 && &buffer[0..4] == b"fLaC" {
+            return Ok("flac".to_string());
+        }
+
+        // OGG: "OggS"
+        if n >= 4 && &buffer[0..4] == b"OggS" {
+            return Ok("ogg".to_string());
+        }
+
+        Err(anyhow::anyhow!("不明な音声フォーマットです"))
     }
 }
 

@@ -47,19 +47,66 @@ impl WhisperEngine {
         //   例: CUDA (cuBLAS) を使う場合は `WHISPER_CUBLAS=1` 等のフラグでビルド
         ctx_params.use_gpu = config.whisper.enable_gpu;
 
+        // GPU設定のデバッグ情報
+        println!("=== GPU設定情報 ===");
+        println!("設定でGPU有効化: {}", config.whisper.enable_gpu);
+        println!("WhisperContextParameters.use_gpu: {}", ctx_params.use_gpu);
+
+        // 環境変数の確認
+        if let Ok(cublas) = std::env::var("WHISPER_CUBLAS") {
+            println!("WHISPER_CUBLAS環境変数: {}", cublas);
+        } else {
+            println!("WHISPER_CUBLAS環境変数: 未設定");
+        }
+
+        if let Ok(opencl) = std::env::var("WHISPER_OPENCL") {
+            println!("WHISPER_OPENCL環境変数: {}", opencl);
+        } else {
+            println!("WHISPER_OPENCL環境変数: 未設定");
+        }
+
+        // CUDA情報の確認
+        #[cfg(feature = "cuda")]
+        {
+            println!("CUDA feature is enabled");
+        }
+        #[cfg(not(feature = "cuda"))]
+        {
+            println!("CUDA feature is disabled");
+        }
+
+        #[cfg(feature = "opencl")]
+        {
+            println!("OpenCL feature is enabled");
+        }
+        #[cfg(not(feature = "opencl"))]
+        {
+            println!("OpenCL feature is disabled");
+        }
+
         // コンテキスト作成（GPU有効時に失敗した場合はCPUでフォールバック）
-        let context = match WhisperContext::new_with_params(model_path, ctx_params) {
-            Ok(ctx) => ctx,
+        let (context, gpu_actually_enabled) = match WhisperContext::new_with_params(model_path, ctx_params) {
+            Ok(ctx) => {
+                if config.whisper.enable_gpu {
+                    println!("✓ GPU対応のWhisperコンテキストの初期化に成功しました");
+                    println!("✓ GPUアクセラレーションが有効です");
+                } else {
+                    println!("✓ CPU専用のWhisperコンテキストの初期化に成功しました");
+                }
+                (ctx, config.whisper.enable_gpu)
+            },
             Err(e) => {
                 if config.whisper.enable_gpu {
                     eprintln!(
-                        "GPU初期化に失敗しました。CPUで再試行します: {}",
+                        "⚠ GPU初期化に失敗しました。CPUで再試行します: {}",
                         e
                     );
                     let mut cpu_params = WhisperContextParameters::default();
                     cpu_params.use_gpu = false;
-                    WhisperContext::new_with_params(model_path, cpu_params)
-                        .map_err(|e| anyhow::anyhow!("Whisperコンテキストの初期化に失敗: {}", e))?
+                    let cpu_context = WhisperContext::new_with_params(model_path, cpu_params)
+                        .map_err(|e| anyhow::anyhow!("Whisperコンテキストの初期化に失敗: {}", e))?;
+                    println!("✓ CPUでのWhisperコンテキスト初期化にフォールバックしました");
+                    (cpu_context, false)
                 } else {
                     return Err(anyhow::anyhow!(
                         "Whisperコンテキストの初期化に失敗: {}",
@@ -76,16 +123,18 @@ impl WhisperEngine {
         };
 
         println!(
-            "Whisperモデルを読み込みました: {} (GPU: {})",
+            "✓ Whisperモデルを読み込みました: {} (GPU: {} -> 実際: {})",
             model_path,
-            if config.whisper.enable_gpu { "enabled" } else { "disabled" }
+            if config.whisper.enable_gpu { "設定有効" } else { "設定無効" },
+            if gpu_actually_enabled { "有効" } else { "無効" }
         );
+        println!("==================");
 
         Ok(Self {
             context: Arc::new(context),
             language,
             whisper_threads: config.performance.whisper_threads as i32,
-            enable_gpu: config.whisper.enable_gpu,
+            enable_gpu: gpu_actually_enabled,
         })
     }
 
@@ -156,9 +205,23 @@ impl WhisperEngine {
         let params = self.make_params(language_override, translate_to_english, include_timestamps);
 
         // 文字起こし実行
+        if self.enable_gpu {
+            println!("🚀 GPU使用で文字起こしを開始します...");
+        } else {
+            println!("🖥️  CPU使用で文字起こしを開始します...");
+        }
+
+        let transcribe_start = std::time::Instant::now();
         state
             .full(params, audio_data)
             .map_err(|e| anyhow::anyhow!("文字起こしに失敗: {}", e))?;
+
+        let transcribe_duration = transcribe_start.elapsed();
+        println!(
+            "⏱️  推論処理時間: {:.2}ms ({})",
+            transcribe_duration.as_secs_f64() * 1000.0,
+            if self.enable_gpu { "GPU" } else { "CPU" }
+        );
 
         // 結果の取得
         // - セグメントごとにテキスト/開始(t0)/終了(t1) を参照
@@ -267,6 +330,17 @@ impl WhisperEngine {
     }
 }
 
+// Implement Debug without requiring inner WhisperContext to be Debug
+impl std::fmt::Debug for WhisperEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WhisperEngine")
+            .field("language", &self.language)
+            .field("whisper_threads", &self.whisper_threads)
+            .field("enable_gpu", &self.enable_gpu)
+            .finish()
+    }
+}
+
 // スレッドセーフなクローンを実装
 impl Clone for WhisperEngine {
     fn clone(&self) -> Self {
@@ -280,7 +354,7 @@ impl Clone for WhisperEngine {
 }
 
 /// モデル情報
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ModelInfo {
     pub is_loaded: bool,
     pub language: Option<String>,
@@ -344,7 +418,7 @@ pub fn preprocess_audio(audio_data: &mut [f32]) {
 }
 
 /// 音声データの正規化
-/// - 振幅の最大絶対値を 0.95 に収まるようスケーリング
+/// - 最大絶対値が0.95を超える場合のみスケーリング（増幅はしない）
 fn normalize_audio(audio_data: &mut [f32]) {
     if audio_data.is_empty() {
         return;
@@ -356,11 +430,9 @@ fn normalize_audio(audio_data: &mut [f32]) {
         .map(|&x| x.abs())
         .fold(0.0f32, f32::max);
 
-    if max_abs > 0.0 {
-        // 正規化係数を計算（最大値を0.95に制限）
+    // すでに範囲内（<= 0.95）の場合は何もしない。
+    if max_abs > 0.95 {
         let normalize_factor = 0.95 / max_abs;
-
-        // 正規化を適用
         for sample in audio_data.iter_mut() {
             *sample *= normalize_factor;
         }
@@ -383,6 +455,10 @@ pub fn get_supported_languages() -> Vec<&'static str> {
 /// 言語コードから言語名を取得
 pub fn get_language_name(code: &str) -> &'static str {
     match code {
+        // Special
+        "auto" => "Auto Detect",
+
+        // Core languages
         "en" => "English",
         "zh" => "Chinese",
         "de" => "German",
@@ -399,7 +475,92 @@ pub fn get_language_name(code: &str) -> &'static str {
         "ar" => "Arabic",
         "sv" => "Swedish",
         "it" => "Italian",
-        "auto" => "Auto Detect",
+
+        // Extended set matching get_supported_languages()
+        "id" => "Indonesian",
+        "hi" => "Hindi",
+        "fi" => "Finnish",
+        "vi" => "Vietnamese",
+        "he" => "Hebrew",
+        "uk" => "Ukrainian",
+        "el" => "Greek",
+        "ms" => "Malay",
+        "cs" => "Czech",
+        "ro" => "Romanian",
+        "da" => "Danish",
+        "hu" => "Hungarian",
+        "ta" => "Tamil",
+        "no" => "Norwegian",
+        "th" => "Thai",
+        "ur" => "Urdu",
+        "hr" => "Croatian",
+        "bg" => "Bulgarian",
+        "lt" => "Lithuanian",
+        "la" => "Latin",
+        "mi" => "Maori",
+        "ml" => "Malayalam",
+        "cy" => "Welsh",
+        "sk" => "Slovak",
+        "te" => "Telugu",
+        "fa" => "Persian",
+        "lv" => "Latvian",
+        "bn" => "Bengali",
+        "sr" => "Serbian",
+        "az" => "Azerbaijani",
+        "sl" => "Slovenian",
+        "kn" => "Kannada",
+        "et" => "Estonian",
+        "mk" => "Macedonian",
+        "br" => "Breton",
+        "eu" => "Basque",
+        "is" => "Icelandic",
+        "hy" => "Armenian",
+        "ne" => "Nepali",
+        "mn" => "Mongolian",
+        "bs" => "Bosnian",
+        "kk" => "Kazakh",
+        "sq" => "Albanian",
+        "sw" => "Swahili",
+        "gl" => "Galician",
+        "mr" => "Marathi",
+        "pa" => "Punjabi",
+        "si" => "Sinhala",
+        "km" => "Khmer",
+        "sn" => "Shona",
+        "yo" => "Yoruba",
+        "so" => "Somali",
+        "af" => "Afrikaans",
+        "oc" => "Occitan",
+        "ka" => "Georgian",
+        "be" => "Belarusian",
+        "tg" => "Tajik",
+        "sd" => "Sindhi",
+        "gu" => "Gujarati",
+        "am" => "Amharic",
+        "yi" => "Yiddish",
+        "lo" => "Lao",
+        "uz" => "Uzbek",
+        "fo" => "Faroese",
+        "ht" => "Haitian Creole",
+        "ps" => "Pashto",
+        "tk" => "Turkmen",
+        "nn" => "Norwegian Nynorsk",
+        "mt" => "Maltese",
+        "sa" => "Sanskrit",
+        "lb" => "Luxembourgish",
+        "my" => "Burmese",
+        "bo" => "Tibetan",
+        "tl" => "Tagalog",
+        "mg" => "Malagasy",
+        "as" => "Assamese",
+        "tt" => "Tatar",
+        "haw" => "Hawaiian",
+        "ln" => "Lingala",
+        "ha" => "Hausa",
+        "ba" => "Bashkir",
+        "jw" => "Javanese",
+        "su" => "Sundanese",
+
         _ => "Unknown",
     }
 }
