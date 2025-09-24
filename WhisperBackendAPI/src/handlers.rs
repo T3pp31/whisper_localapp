@@ -167,10 +167,11 @@ pub async fn transcribe_basic(
 }
 
 /// タイムスタンプ付き文字起こしエンドポイント
+/// - セグメント（start/end/text）のみを返却します（全文テキストは返しません）
 pub async fn transcribe_with_timestamps(
     State(state): State<AppState>,
     mut multipart: Multipart,
-) -> ApiResult<Json<TranscribeResponse>> {
+) -> ApiResult<Json<Vec<TranscriptionSegment>>> {
     // 統計情報を更新
     {
         let mut stats = state.stats.lock().unwrap();
@@ -232,19 +233,21 @@ pub async fn transcribe_with_timestamps(
     // 処理を実行
     let result = process_transcription(state.clone(), file_data, filename, request, start_time).await;
 
-    // 統計情報を更新
-    match &result {
-        Ok(response) => {
+    // 統計情報を更新しつつ、セグメントのみ返却
+    match result {
+        Ok(axum::response::Json(resp)) => {
             let mut stats = state.stats.lock().unwrap();
-            stats.record_success(response.processing_time_ms);
+            stats.record_success(resp.processing_time_ms);
+
+            let segments = resp.segments.unwrap_or_default();
+            Ok(Json(segments))
         }
-        Err(_) => {
+        Err(e) => {
             let mut stats = state.stats.lock().unwrap();
             stats.record_failure();
+            Err(e)
         }
     }
-
-    result
 }
 
 /// 文字起こし処理の共通ロジック
