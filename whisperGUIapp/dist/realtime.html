@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>リアルタイム文字起こし</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .rt-container { padding: 16px; }
+    .rt-row { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+    .vu { height: 10px; background: #eee; width: 260px; position: relative; border-radius: 4px; overflow: hidden; }
+    .vu > span { display: block; height: 100%; background: #4caf50; width: 0%; }
+    .area { width: 100%; min-height: 140px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; }
+  </style>
+  <script>
+    window.__TAURI__ || (window.__TAURI__ = {});
+  </script>
+  <script defer src="realtime.js"></script>
+</head>
+<body>
+  <div class="rt-container">
+    <h2>リアルタイム文字起こし（ローカル）</h2>
+    <div class="rt-row">
+      <button id="rt-start">開始</button>
+      <button id="rt-stop" disabled>停止</button>
+      <span id="rt-status">待機中</span>
+    </div>
+    <div class="rt-row">
+      <label>入力レベル</label>
+      <div class="vu"><span id="rt-vu"></span></div>
+      <span id="rt-vu-text" style="font-size:12px;color:#666;">- dB</span>
+    </div>
+    <div class="rt-row" style="flex-direction: column; align-items: stretch;">
+      <label>途中結果</label>
+      <div id="rt-partial" class="area mono" style="background:#fafafa;border:1px solid #eee;padding:8px;"></div>
+    </div>
+    <div class="rt-row" style="flex-direction: column; align-items: stretch;">
+      <label>確定結果</label>
+      <textarea id="rt-final" class="area" readonly placeholder="まだ結果がありません"></textarea>
+    </div>
+  </div>
+</body>
+</html>
+

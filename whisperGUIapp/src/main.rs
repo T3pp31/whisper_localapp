@@ -12,6 +12,7 @@ mod audio;
 mod config;
 mod models;
 mod whisper;
+mod realtime;
 
 use audio::{AudioProcessor};
 use config::Config;
@@ -1241,6 +1242,9 @@ fn main() {
             get_performance_info,
             update_whisper_threads,
             start_transcription,
+            realtime::realtime_start,
+            realtime::realtime_stop,
+            realtime::realtime_status,
             get_remote_server_settings,
             update_remote_server_settings,
             copy_to_clipboard,
