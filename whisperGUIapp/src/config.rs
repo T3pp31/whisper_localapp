@@ -169,7 +169,7 @@ impl Config {
 }
 
 fn default_remote_server_url() -> String {
-    "http://127.0.0.1:8080".to_string()
+    "http://10.10.15.107:8080".to_string()
 }
 
 fn default_remote_server_endpoint() -> String {
