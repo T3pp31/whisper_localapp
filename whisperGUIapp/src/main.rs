@@ -33,6 +33,7 @@ use serde_json::Value as JsonValue;
 struct AppState {
     config: Arc<Mutex<Config>>,
     whisper_engine: Arc<Mutex<Option<WhisperEngine>>>,
+    cached_audio: Arc<Mutex<Option<CachedAudio>>>,
 }
 
 impl AppState {
@@ -43,6 +44,7 @@ impl AppState {
         Ok(Self {
             config: Arc::new(Mutex::new(config)),
             whisper_engine: Arc::new(Mutex::new(None)),
+            cached_audio: Arc::new(Mutex::new(None)),
         })
     }
 }
@@ -88,10 +90,32 @@ struct ModelInfo {
     size_mb: Option<f64>,
 }
 
+/// 汎用タスク進捗イベントのペイロード。
+#[derive(Serialize, Clone)]
+struct TaskProgressPayload {
+    task: String,        // 例: "file-read", "upload"
+    filename: String,    // 対象ファイル名
+    done: u64,           // 完了量
+    total: Option<u64>,  // 総量（不明なら None）
+    phase: String,       // start | progress | done | error
+    message: Option<String>,
+}
+
+fn emit_task_progress(app: &tauri::AppHandle, payload: &TaskProgressPayload) {
+    let _ = app.emit_all("task-progress", payload.clone());
+}
+
+/// 同一ファイルの二重読み込みを避けるための簡易キャッシュ。
+#[derive(Clone)]
+struct CachedAudio {
+    path: String,
+    data: Vec<f32>,
+}
+
 // Tauri コマンドハンドラー
 /// ファイルダイアログで音声/動画ファイルを選択する。
 #[tauri::command]
-fn select_audio_file() -> Result<String, String> {
+fn select_audio_file(state: State<'_, AppState>) -> Result<String, String> {
     use tauri::api::dialog::blocking::FileDialogBuilder;
 
     let file_path = FileDialogBuilder::new()
@@ -100,7 +124,13 @@ fn select_audio_file() -> Result<String, String> {
         .pick_file();
 
     match file_path {
-        Some(path) => Ok(path.to_string_lossy().to_string()),
+        Some(path) => {
+            // 新規ファイル選択時にキャッシュをクリア
+            if let Ok(mut cache) = state.cached_audio.lock() {
+                *cache = None;
+            }
+            Ok(path.to_string_lossy().to_string())
+        }
         None => Err("ファイルが選択されませんでした".to_string()),
     }
 }
@@ -124,7 +154,7 @@ async fn load_audio_metadata(path: String, state: State<'_, AppState>) -> Result
 
 /// 16kHz モノラルのプレビュー用 WAV を temp に生成し、絶対パスを返す。
 #[tauri::command]
-async fn prepare_preview_wav(path: String, state: State<'_, AppState>) -> Result<String, String> {
+async fn prepare_preview_wav(path: String, state: State<'_, AppState>, app: tauri::AppHandle) -> Result<String, String> {
     let config = state
         .config
         .lock()
@@ -156,9 +186,92 @@ async fn prepare_preview_wav(path: String, state: State<'_, AppState>) -> Result
         let _ = std::fs::remove_file(&preview_path);
     }
 
+    // 進捗開始（ファイルプレビュー読み込み）
+    let fname = std::path::Path::new(&path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+    emit_task_progress(&app, &TaskProgressPayload {
+        task: "file-preview".to_string(),
+        filename: fname.clone(),
+        done: 0,
+        total: None,
+        phase: "start".to_string(),
+        message: Some("プレビュー用に読み込み開始".to_string()),
+    });
+
+    // 既に同一ファイルのデータがキャッシュされていれば再利用
+    let mut used_cache = false;
+    let audio_data = {
+        if let Ok(cache_guard) = state.cached_audio.lock() {
+            if let Some(cached) = cache_guard.as_ref() {
+                if cached.path == path {
+                    used_cache = true;
+                    cached.data.clone()
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        }
+    };
+
+    // キャッシュが無ければデコードしてキャッシュ保存
+    let audio_data = if used_cache {
+        audio_data
+    } else {
+        let app_for_progress = app.clone();
+        let fname_for_progress = fname.clone();
+        let data = processor
+            .load_audio_file_with_progress(&path, Some(move |done, total| {
+                emit_task_progress(&app_for_progress, &TaskProgressPayload {
+                    task: "file-preview".to_string(),
+                    filename: fname_for_progress.clone(),
+                    done,
+                    total,
+                    phase: "progress".to_string(),
+                    message: None,
+                });
+            }))
+            .map_err(|e| format!("プレビュー用の読み込みに失敗しました: {}", e))?;
+
+        // キャッシュに保存
+        if let Ok(mut cache) = state.cached_audio.lock() {
+            *cache = Some(CachedAudio { path: path.clone(), data: data.clone() });
+        }
+        data
+    };
+
+    // WAV へ書き出し
     processor
-        .decode_to_wav_file(&path, &preview_path.to_string_lossy())
-        .map_err(|e| format!("プレビューWAV生成に失敗しました: {}", e))?;
+        .write_wav_from_mono_samples(&preview_path.to_string_lossy(), &audio_data)
+        .map_err(|e| format!("プレビューWAV書き出しに失敗しました: {}", e))?;
+
+    // キャッシュに保存（同一ファイルの再読み込みを避ける）
+    {
+        let mut cache = state
+            .cached_audio
+            .lock()
+            .map_err(|_| "キャッシュへの保存に失敗しました")?;
+        *cache = Some(CachedAudio {
+            path: path.clone(),
+            data: audio_data.clone(),
+        });
+    }
+
+    // 進捗完了
+    emit_task_progress(&app, &TaskProgressPayload {
+        task: "file-preview".to_string(),
+        filename: fname,
+        done: 1,
+        total: Some(1),
+        phase: "done".to_string(),
+        message: Some("プレビュー準備完了".to_string()),
+    });
 
     // 返却するパスは文字列の絶対パス
     Ok(preview_path.to_string_lossy().to_string())
@@ -245,6 +358,7 @@ async fn start_transcription(
     language: String,
     translate_to_english: bool,
     state: State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> Result<TranscriptionResult, String> {
     let config_snapshot = {
         let config = state.config.lock().map_err(|_| "設定の読み込みに失敗しました")?;
@@ -253,23 +367,121 @@ async fn start_transcription(
 
     // リモート GPU サーバを利用する場合は HTTP 経由で実行
     if config_snapshot.whisper.use_remote_server {
+        // キャッシュのスナップショット（リモート送信時の最適化用）
+        let cached_opt = match state.cached_audio.lock() {
+            Ok(g) => g.clone(),
+            Err(_) => None,
+        };
         return transcribe_via_remote(
+            app.clone(),
             &audio_path,
             &language,
             translate_to_english,
             &config_snapshot.whisper.remote_server_url,
             &config_snapshot.whisper.remote_server_endpoint,
             &config_snapshot,
+            cached_opt,
         ).await;
     }
 
-    // 音声ファイルの読み込み
-    let mut processor = AudioProcessor::new(&config_snapshot)
-        .map_err(|e| format!("オーディオ処理の初期化に失敗しました: {}", e))?;
+    // 可能ならキャッシュを再利用
+    let mut use_cache = false;
+    let audio_data: Vec<f32> = {
+        if let Ok(cache_guard) = state.cached_audio.lock() {
+            if let Some(cached) = cache_guard.as_ref() {
+                if cached.path == audio_path {
+                    use_cache = true;
+                    cached.data.clone()
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        }
+    };
 
-    let audio_data = processor
-        .load_audio_file(&audio_path)
-        .map_err(|e| format!("音声読み込みエラー: {}", e))?;
+    let audio_data = if use_cache {
+        // キャッシュ利用を通知（即完了）
+        let fname = std::path::Path::new(&audio_path)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+        emit_task_progress(&app, &TaskProgressPayload {
+            task: "file-read".to_string(),
+            filename: fname.clone(),
+            done: 0,
+            total: None,
+            phase: "start".to_string(),
+            message: Some("キャッシュから音声を取得".to_string()),
+        });
+        emit_task_progress(&app, &TaskProgressPayload {
+            task: "file-read".to_string(),
+            filename: fname,
+            done: 1,
+            total: Some(1),
+            phase: "done".to_string(),
+            message: Some("読み込み完了".to_string()),
+        });
+        audio_data
+    } else {
+        // 音声ファイルの読み込み（未キャッシュ）
+        let mut processor = AudioProcessor::new(&config_snapshot)
+            .map_err(|e| format!("オーディオ処理の初期化に失敗しました: {}", e))?;
+
+        // ファイル読み込み進捗の開始通知
+        let fname = std::path::Path::new(&audio_path)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+        emit_task_progress(&app, &TaskProgressPayload {
+            task: "file-read".to_string(),
+            filename: fname.clone(),
+            done: 0,
+            total: None,
+            phase: "start".to_string(),
+            message: Some("音声ファイル読み込みを開始".to_string()),
+        });
+
+        let app_for_progress = app.clone();
+        let fname_for_progress = fname.clone();
+        let data = processor
+            .load_audio_file_with_progress(&audio_path, Some(move |done, total| {
+                emit_task_progress(&app_for_progress, &TaskProgressPayload {
+                    task: "file-read".to_string(),
+                    filename: fname_for_progress.clone(),
+                    done,
+                    total,
+                    phase: "progress".to_string(),
+                    message: None,
+                });
+            }))
+            .map_err(|e| format!("音声読み込みエラー: {}", e))?;
+
+        // キャッシュへ保存
+        if let Ok(mut cache) = state.cached_audio.lock() {
+            *cache = Some(CachedAudio {
+                path: audio_path.clone(),
+                data: data.clone(),
+            });
+        }
+
+        // 進捗100%（完了）
+        emit_task_progress(&app, &TaskProgressPayload {
+            task: "file-read".to_string(),
+            filename: fname,
+            done: 1,
+            total: Some(1),
+            phase: "done".to_string(),
+            message: Some("音声ファイル読み込み完了".to_string()),
+        });
+
+        data
+    };
 
     // Whisperエンジンの初期化
     {
@@ -332,12 +544,14 @@ async fn start_transcription(
 
 /// リモート GPU サーバへ音声ファイルを送信してタイムスタンプ付き文字起こしを取得。
 async fn transcribe_via_remote(
+    app: tauri::AppHandle,
     audio_path: &str,
     language: &str,
     translate_to_english: bool,
     base_url: &str,
     endpoint_path: &str,
     config: &Config,
+    cached_audio: Option<CachedAudio>,
 ) -> Result<TranscriptionResult, String> {
     // エンドポイントを組み立て（endpoint が絶対URLなら優先）
     let endpoint_trimmed = endpoint_path.trim();
@@ -353,155 +567,271 @@ async fn transcribe_via_remote(
         format!("{}{}", base, ep_owned)
     };
 
-    // サーバ許容拡張子チェック（wav / mp3 / m4a / flac / ogg）。
-    // 非対応の場合は一時WAVへ変換して送信。
-    let allowed_exts = ["wav", "mp3", "m4a", "flac", "ogg"];
+    // まず、プレビューWAVが使えるならそれを優先（再デコード回避）
+    // temp ディレクトリを解決
+    let mut temp_dir = std::path::PathBuf::from(&config.paths.temp_dir);
+    if temp_dir.is_relative() {
+        let base = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")));
+        temp_dir = base.join(temp_dir);
+    }
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|e| format!("一時ディレクトリの作成に失敗しました: {}", e))?;
+
+    let preview_path = temp_dir.join("preview.wav");
+
+    // upload_path の決定ポリシー:
+    // 1) cached_audio の path が一致し、preview.wav が存在すれば preview.wav を使う
+    // 2) 1が無くても cached_audio の path が一致すれば、remote_upload.wav を生成して使う
+    // 3) 2も無い場合は拡張子で許容されていれば元ファイル、そうでなければWAVへ変換
     let orig_path = std::path::Path::new(audio_path);
-    let ext_ok = orig_path
-        .extension()
-        .and_then(|s| s.to_str())
-        .map(|s| allowed_exts.contains(&s.to_lowercase().as_str()))
-        .unwrap_or(false);
-
-    // 変換先のアップロードパスを決定
-    let upload_path: std::path::PathBuf = if ext_ok {
-        orig_path.to_path_buf()
-    } else {
-        // temp ディレクトリを解決
-        let mut temp_dir = std::path::PathBuf::from(&config.paths.temp_dir);
-        if temp_dir.is_relative() {
-            let base = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")));
-            temp_dir = base.join(temp_dir);
+    let upload_path: std::path::PathBuf = if let Some(cached) = &cached_audio {
+        if cached.path == audio_path && preview_path.exists() {
+            preview_path
+        } else if cached.path == audio_path {
+            let target = temp_dir.join("remote_upload.wav");
+            // キャッシュ済みサンプルを直接WAV化（16kHz mono）
+            let processor = AudioProcessor::new(config)
+                .map_err(|e| format!("オーディオ処理の初期化に失敗しました: {}", e))?;
+            processor
+                .write_wav_from_mono_samples(&target.to_string_lossy(), &cached.data)
+                .map_err(|e| format!("GPUサーバ用のWAV作成に失敗しました: {}", e))?;
+            target
+        } else {
+            // 異なるファイルのキャッシュなら無視して通常ルート
+            // サーバ許容拡張子チェック
+            let allowed_exts = ["wav", "mp3", "m4a", "flac", "ogg"];
+            let ext_ok = orig_path
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(|s| allowed_exts.contains(&s.to_lowercase().as_str()))
+                .unwrap_or(false);
+            if ext_ok {
+                orig_path.to_path_buf()
+            } else {
+                let target = temp_dir.join("remote_upload.wav");
+                let mut processor = AudioProcessor::new(config)
+                    .map_err(|e| format!("オーディオ処理の初期化に失敗しました: {}", e))?;
+                processor
+                    .decode_to_wav_file(audio_path, &target.to_string_lossy())
+                    .map_err(|e| format!("GPUサーバ用のWAV変換に失敗しました: {}", e))?;
+                target
+            }
         }
-        std::fs::create_dir_all(&temp_dir)
-            .map_err(|e| format!("一時ディレクトリの作成に失敗しました: {}", e))?;
-
-        let target = temp_dir.join("remote_upload.wav");
-        // 変換実施
-        let mut processor = AudioProcessor::new(config)
-            .map_err(|e| format!("オーディオ処理の初期化に失敗しました: {}", e))?;
-        processor
-            .decode_to_wav_file(audio_path, &target.to_string_lossy())
-            .map_err(|e| format!("GPUサーバ用のWAV変換に失敗しました: {}", e))?;
-        target
+    } else {
+        let allowed_exts = ["wav", "mp3", "m4a", "flac", "ogg"];
+        let ext_ok = orig_path
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(|s| allowed_exts.contains(&s.to_lowercase().as_str()))
+            .unwrap_or(false);
+        if ext_ok {
+            orig_path.to_path_buf()
+        } else {
+            let target = temp_dir.join("remote_upload.wav");
+            let mut processor = AudioProcessor::new(config)
+                .map_err(|e| format!("オーディオ処理の初期化に失敗しました: {}", e))?;
+            processor
+                .decode_to_wav_file(audio_path, &target.to_string_lossy())
+                .map_err(|e| format!("GPUサーバ用のWAV変換に失敗しました: {}", e))?;
+            target
+        }
     };
 
-    // ファイルを読み込んで固定長のバイト列として送信（curl に近い挙動）
-    let bytes = std::fs::read(&upload_path)
-        .map_err(|e| format!("音声ファイルの読み込みに失敗しました: {}", e))?;
+    // アップロード用のファイル名
     let filename = upload_path
         .file_name()
         .and_then(|s| s.to_str())
-        .unwrap_or("audio");
+        .unwrap_or("audio")
+        .to_string();
+    // ブロッキング送信 + 進捗
+    // 送信サイズを取得
+    let file_len = std::fs::metadata(&upload_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
 
-    // multipart フォームを構築（MIME を簡易推定）
-    // curl の既定に合わせて application/octet-stream を強制
-    let mut file_part = reqwest::multipart::Part::bytes(bytes)
-        .file_name(filename.to_string());
-    let _ = {
-        file_part = file_part.mime_str("application/octet-stream")
-            .map_err(|e| format!("MIME設定に失敗しました: {}", e))?;
-        &file_part
-    };
-    let mut form = reqwest::multipart::Form::new()
-        .part("file", file_part)
-        .text("translate_to_english", if translate_to_english { "true" } else { "false" }.to_string());
-    let lang_trim = language.trim();
-    if !lang_trim.is_empty() && lang_trim != "auto" {
-        form = form.text("language", lang_trim.to_string());
-    }
+    // 進捗: start
+    emit_task_progress(&app, &TaskProgressPayload {
+        task: "upload".to_string(),
+        filename: filename.clone(),
+        done: 0,
+        total: if file_len > 0 { Some(file_len) } else { None },
+        phase: "start".to_string(),
+        message: Some("GPUサーバへ送信を開始".to_string()),
+    });
 
-    // リクエスト送信
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(&endpoint_full)
-        .multipart(form)
-        .send()
-        .await
-        .map_err(|e| format!("GPUサーバへの接続に失敗しました: {}", e))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        let mut snippet = body.trim().to_string();
-        if snippet.len() > 500 { snippet.truncate(500); snippet.push_str(" …"); }
-        return Err(format!("GPUサーバがエラーを返しました: HTTP {} {} -> {}", status, endpoint_full, snippet));
-    }
-
-    // 応答解析: JSONの場合は text/segments を解釈。非JSONはテキストとして採用。
-    let ct = resp
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_lowercase();
-
-    if ct.starts_with("application/json") {
-        let json: JsonValue = resp
-            .json()
-            .await
-            .map_err(|e| format!("JSON の解析に失敗しました: {}", e))?;
-
-        // 1) segments 優先（ローカル出力と同じ整形にするため）
-        //    - トップレベルに segments 配列があるオブジェクト
-        //    - トップレベル自体が配列（GPU サーバが配列そのものを返すケース）
-        if let Some(arr) = json.get("segments").and_then(|v| v.as_array())
-            .or_else(|| json.as_array())
-        {
-            let mut lines: Vec<String> = Vec::new();
-            for seg in arr {
-                let text = seg
-                    .get("text")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-
-                // 秒 or ミリ秒どちらでも吸収
-                let (start_ms, end_ms) = if let (Some(s), Some(e)) = (
-                    seg.get("start_time_ms").and_then(|v| v.as_u64()),
-                    seg.get("end_time_ms").and_then(|v| v.as_u64()),
-                ) {
-                    (s, e)
-                } else {
-                    let s = seg
-                        .get("start")
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(0.0);
-                    let e = seg
-                        .get("end")
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(s);
-                    ((s * 1000.0) as u64, (e * 1000.0) as u64)
-                };
-
-                lines.push(format!(
-                    "[{} --> {}] {}",
-                    format_timestamp_ms(start_ms),
-                    format_timestamp_ms(end_ms),
-                    text
-                ));
+    // 送信はブロッキングAPIで進捗を取りつつ行う
+    let endpoint_clone = endpoint_full.clone();
+    let fname_owned = filename.clone();
+    let app_clone = app.clone();
+    let lang_owned = language.to_string();
+    let result = tokio::task::spawn_blocking(move || {
+        // 進捗付きリーダ
+        struct ProgressReader {
+            inner: std::fs::File,
+            uploaded: u64,
+            total: u64,
+            last_pct: i32,
+            app: tauri::AppHandle,
+            filename: String,
+        }
+        impl Read for ProgressReader {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let n = self.inner.read(buf)?;
+                if n > 0 {
+                    self.uploaded += n as u64;
+                    if self.total > 0 {
+                        let pct = ((self.uploaded.min(self.total)) * 100 / self.total) as i32;
+                        if pct != self.last_pct {
+                            self.last_pct = pct;
+                            emit_task_progress(&self.app, &TaskProgressPayload {
+                                task: "upload".to_string(),
+                                filename: self.filename.clone(),
+                                done: self.uploaded.min(self.total),
+                                total: Some(self.total),
+                                phase: "progress".to_string(),
+                                message: None,
+                            });
+                        }
+                    } else {
+                        emit_task_progress(&self.app, &TaskProgressPayload {
+                            task: "upload".to_string(),
+                            filename: self.filename.clone(),
+                            done: self.uploaded,
+                            total: None,
+                            phase: "progress".to_string(),
+                            message: None,
+                        });
+                    }
+                }
+                Ok(n)
             }
-            let text = lines.join("\n");
-            return Ok(TranscriptionResult { text, segments: arr.len() });
         }
 
-        // 2) フォールバック: text があればそれを利用
-        if let Some(t) = json.get("text").and_then(|v| v.as_str()) {
-            return Ok(TranscriptionResult { text: t.to_string(), segments: 1 });
+        let file = std::fs::File::open(&upload_path)
+            .map_err(|e| format!("音声ファイルの読み込みに失敗しました: {}", e))?;
+        let reader = ProgressReader {
+            inner: file,
+            uploaded: 0,
+            total: file_len,
+            last_pct: -1,
+            app: app_clone,
+            filename: fname_owned.clone(),
+        };
+
+        // multipart フォームを構築
+        let mut part = reqwest::blocking::multipart::Part::reader(reader)
+            .file_name(fname_owned.clone());
+        part = part.mime_str("application/octet-stream")
+            .map_err(|e| format!("MIME設定に失敗しました: {}", e))?;
+
+        let mut form = reqwest::blocking::multipart::Form::new()
+            .part("file", part)
+            .text("translate_to_english", if translate_to_english { "true" } else { "false" }.to_string());
+        let lang_trim = lang_owned.trim();
+        if !lang_trim.is_empty() && lang_trim != "auto" {
+            form = form.text("language", lang_trim.to_string());
         }
 
-        // 3) それ以外の JSON は文字列化
-        let text = json.to_string();
-        return Ok(TranscriptionResult { text, segments: 1 });
-    } else {
-        let body = resp.text().await.map_err(|e| format!("応答読み取りに失敗しました: {}", e))?;
+        let client = reqwest::blocking::Client::builder().build()
+            .map_err(|e| format!("HTTPクライアント初期化に失敗しました: {}", e))?;
+        let resp = client
+            .post(&endpoint_clone)
+            .multipart(form)
+            .send()
+            .map_err(|e| format!("GPUサーバへの接続に失敗しました: {}", e))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            let mut snippet = body.trim().to_string();
+            if snippet.len() > 500 { snippet.truncate(500); snippet.push_str(" …"); }
+            return Err(format!("GPUサーバがエラーを返しました: HTTP {} {} -> {}", status, endpoint_clone, snippet));
+        }
+
+        // 応答解析
+        let ct = resp
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_lowercase();
+
+        if ct.starts_with("application/json") {
+            let json: JsonValue = resp
+                .json()
+                .map_err(|e| format!("JSON の解析に失敗しました: {}", e))?;
+            Ok::<JsonValue, String>(json)
+        } else {
+            // 非JSONはテキストとして扱う
+            let body = resp.text().unwrap_or_default();
+            // テキストは JSON へラップして返す
+            Ok::<JsonValue, String>(JsonValue::String(body))
+        }
+    })
+    .await
+    .map_err(|e| format!("アップロードスレッドの実行に失敗しました: {}", e))??;
+
+    // 進捗: done
+    emit_task_progress(&app, &TaskProgressPayload {
+        task: "upload".to_string(),
+        filename: filename.clone(),
+        done: file_len,
+        total: if file_len > 0 { Some(file_len) } else { None },
+        phase: "done".to_string(),
+        message: Some("送信完了".to_string()),
+    });
+
+    // result は JSON か 文字列
+    if result.is_string() {
+        let body = result.as_str().unwrap_or("").to_string();
         // セグメント数は大まかに行数で推定
         let segments = body.lines().filter(|l| !l.trim().is_empty()).count();
         let segments = if segments == 0 { 1 } else { segments };
         return Ok(TranscriptionResult { text: body, segments });
     }
+
+    let json = result;
+    // JSON の場合: segments を優先
+    if let Some(arr) = json.get("segments").and_then(|v| v.as_array())
+        .or_else(|| json.as_array())
+    {
+        let mut lines: Vec<String> = Vec::new();
+        for seg in arr {
+            let text = seg
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let (start_ms, end_ms) = if let (Some(s), Some(e)) = (
+                seg.get("start_time_ms").and_then(|v| v.as_u64()),
+                seg.get("end_time_ms").and_then(|v| v.as_u64()),
+            ) {
+                (s, e)
+            } else {
+                let s = seg.get("start").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let e = seg.get("end").and_then(|v| v.as_f64()).unwrap_or(s);
+                ((s * 1000.0) as u64, (e * 1000.0) as u64)
+            };
+            lines.push(format!(
+                "[{} --> {}] {}",
+                format_timestamp_ms(start_ms),
+                format_timestamp_ms(end_ms),
+                text
+            ));
+        }
+        let text = lines.join("\n");
+        return Ok(TranscriptionResult { text, segments: arr.len() });
+    }
+
+    // 2) フォールバック: text があればそれを利用
+    if let Some(t) = json.get("text").and_then(|v| v.as_str()) {
+        return Ok(TranscriptionResult { text: t.to_string(), segments: 1 });
+    }
+    // 3) それ以外の JSON は文字列化
+    let text = json.to_string();
+    Ok(TranscriptionResult { text, segments: 1 })
 }
 
 fn guess_mime_from_filename(name: &str) -> Option<String> {

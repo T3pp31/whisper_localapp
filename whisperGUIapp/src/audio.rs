@@ -26,11 +26,11 @@ pub struct AudioMetadata {
 }
 
 /// 音声処理の中核クラス。コンフィグに基づいてデコードやリサンプリングを行う。
-pub struct AudioProcessor {
-    config: Config,
-}
+    pub struct AudioProcessor {
+        config: Config,
+    }
 
-impl AudioProcessor {
+    impl AudioProcessor {
     /// 構成を取り込み、プロセッサを作成。
     pub fn new(config: &Config) -> Result<Self> {
         Ok(Self {
@@ -39,7 +39,7 @@ impl AudioProcessor {
     }
 
     /// デコードせずに長さやサンプリングレートなどを概算取得する。
-    pub fn probe_metadata(&self, file_path: &str) -> Result<AudioMetadata> {
+        pub fn probe_metadata(&self, file_path: &str) -> Result<AudioMetadata> {
         let path = Path::new(file_path);
         if !path.exists() {
             return Err(anyhow::anyhow!(
@@ -239,11 +239,174 @@ impl AudioProcessor {
         );
 
         Ok(resampled)
-    }
+        }
+
+        /// 進捗コールバック付きで音声ファイルを読み込む。
+        /// コールバックには (処理済みサンプル数, 推定総サンプル数) を渡す。
+        pub fn load_audio_file_with_progress<F>(&mut self, file_path: &str, mut on_progress: Option<F>) -> Result<Vec<f32>>
+        where
+            F: FnMut(u64, Option<u64>),
+        {
+            let path = Path::new(file_path);
+            if !path.exists() {
+                return Err(anyhow::anyhow!(
+                    "音声ファイルが見つかりません: {}",
+                    file_path
+                ));
+            }
+
+            // 事前に概算の総サンプル数を推定（メタデータから）
+            let total_estimate: Option<u64> = match self.probe_metadata(file_path) {
+                Ok(meta) => {
+                    let total = (meta.duration_seconds.max(0.0) as f64
+                        * meta.sample_rate as f64)
+                        .round()
+                        as u64;
+                    if total > 0 { Some(total) } else { None }
+                }
+                Err(_) => None,
+            };
+
+            // ファイルを開く
+            let file = File::open(path)?;
+            let mss = MediaSourceStream::new(Box::new(file), Default::default());
+
+            // フォーマットヒントを設定
+            let mut hint = Hint::new();
+            if let Some(extension) = path.extension() {
+                if let Some(extension_str) = extension.to_str() {
+                    hint.with_extension(extension_str);
+                }
+            }
+
+            // フォーマットを推定
+            let meta_opts: MetadataOptions = Default::default();
+            let fmt_opts: FormatOptions = Default::default();
+
+            let probed = symphonia::default::get_probe().format(&hint, mss, &fmt_opts, &meta_opts)?;
+
+            let mut format = probed.format;
+
+            // 最初のオーディオトラックを見つける
+            let (track_id, codec_params) = {
+                let track = format
+                    .tracks()
+                    .iter()
+                    .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+                    .ok_or_else(|| anyhow::anyhow!("音声トラックが見つかりません"))?;
+
+                (track.id, track.codec_params.clone())
+            };
+
+            // デコーダーを作成
+            let dec_opts: DecoderOptions = Default::default();
+            let mut decoder = symphonia::default::get_codecs().make(&codec_params, &dec_opts)?;
+
+            let mut samples = Vec::new();
+            let mut last_reported_pct: i32 = -1;
+
+            // パケットをデコード
+            loop {
+                let packet = match format.next_packet() {
+                    Ok(packet) => packet,
+                    Err(symphonia::core::errors::Error::ResetRequired) => {
+                        // リセットが必要な場合
+                        break;
+                    }
+                    Err(symphonia::core::errors::Error::IoError(ref err))
+                        if err.kind() == std::io::ErrorKind::UnexpectedEof =>
+                    {
+                        // ファイル終端
+                        break;
+                    }
+                    Err(err) => return Err(anyhow::anyhow!("パケット読み込みエラー: {}", err)),
+                };
+
+                // 正しいトラックのパケットのみを処理
+                if packet.track_id() != track_id {
+                    continue;
+                }
+
+                match decoder.decode(&packet) {
+                    Ok(audio_buf) => {
+                        // 各フレームで全チャネルを平均し、モノラルに変換して蓄積
+                        self.extract_samples_from_buffer(&audio_buf, &mut samples)?;
+                        let processed = samples.len() as u64;
+
+                        // 進捗を 1% 単位で報告
+                        if let Some(total) = total_estimate {
+                            if total > 0 {
+                                let pct = ((processed.min(total)) * 100 / total) as i32;
+                                if pct != last_reported_pct {
+                                    last_reported_pct = pct;
+                                    if let Some(cb) = on_progress.as_mut() {
+                                        cb(processed.min(total), Some(total));
+                                    }
+                                }
+                            } else if let Some(cb) = on_progress.as_mut() {
+                                cb(processed, None);
+                            }
+                        } else if let Some(cb) = on_progress.as_mut() {
+                            // 総量不明
+                            cb(processed, None);
+                        }
+                    }
+                    Err(symphonia::core::errors::Error::IoError(ref err))
+                        if err.kind() == std::io::ErrorKind::UnexpectedEof =>
+                    {
+                        // デコード終了
+                        break;
+                    }
+                    Err(err) => return Err(anyhow::anyhow!("デコードエラー: {}", err)),
+                }
+            }
+
+            if samples.is_empty() {
+                return Err(anyhow::anyhow!("音声データが空です"));
+            }
+
+            // サンプリングレートを取得（デコーダが提供する値を優先）
+            let original_sample_rate = decoder
+                .codec_params()
+                .sample_rate
+                .or(codec_params.sample_rate)
+                .ok_or_else(|| anyhow::anyhow!("サンプリングレートが取得できません"))? as f64;
+
+            // 既にモノラルへ変換済み
+            let mono_samples = samples;
+
+            // 16kHzなど設定レートにリサンプル
+            let target_sample_rate = self.config.audio.sample_rate as f64;
+            let resampled = if (original_sample_rate - target_sample_rate).abs() > 1.0 {
+                self.resample_audio(mono_samples, original_sample_rate, target_sample_rate)?
+            } else {
+                mono_samples
+            };
+
+            println!(
+                "音声ファイル読み込み完了: {} samples, {}Hz -> {}Hz",
+                resampled.len(),
+                original_sample_rate,
+                target_sample_rate
+            );
+
+            Ok(resampled)
+        }
 
     /// 入力ファイルを読み込み、モノラル16bit PCM WAV で保存（プレビュー用）。
     pub fn decode_to_wav_file(&mut self, src_path: &str, dst_path: &str) -> Result<()> {
         let samples_f32 = self.load_audio_file(src_path)?;
+        let sr = self.config.audio.sample_rate as u32;
+        write_wav_mono_16(dst_path, sr, &samples_f32)?;
+        Ok(())
+    }
+
+    /// 入力ファイルを読み込み（進捗コールバック付き）、モノラル16bit PCM WAV で保存（プレビュー用）。
+    pub fn decode_to_wav_file_with_progress<F>(&mut self, src_path: &str, dst_path: &str, on_progress: Option<F>) -> Result<()>
+    where
+        F: FnMut(u64, Option<u64>),
+    {
+        let samples_f32 = self.load_audio_file_with_progress(src_path, on_progress)?;
         let sr = self.config.audio.sample_rate as u32;
         write_wav_mono_16(dst_path, sr, &samples_f32)?;
         Ok(())
@@ -393,4 +556,11 @@ fn write_wav_mono_16(path: &str, sample_rate: u32, samples: &[f32]) -> Result<()
     file.write_all(&riff_size.to_le_bytes())?;
 
     Ok(())
+}
+
+impl AudioProcessor {
+    /// 既にモノラルf32で用意されたサンプルからWAVを書き出す（プレビュー等に利用）。
+    pub fn write_wav_from_mono_samples(&self, path: &str, samples: &[f32]) -> Result<()> {
+        write_wav_mono_16(path, self.config.audio.sample_rate, samples)
+    }
 }

@@ -22,6 +22,10 @@
                         <button id="browse-button">参照...</button>
                         <button id="load-button">読み込み</button>
                     </div>
+                    <div class="file-read-progress" id="file-read-progress-row" style="display: none; margin-top: 6px;">
+                        <progress id="file-read-progress" max="100" value="0" style="width: 100%;"></progress>
+                        <div id="file-read-progress-text" style="font-size: 12px; color: #555; margin-top: 4px;">-</div>
+                    </div>
 
                     <div class="media-controls" id="media-controls" style="display: none;">
                         <div class="progress-bar">
@@ -129,6 +133,10 @@
                 <!-- 文字起こし開始ボタン -->
                 <div class="transcription-controls">
                     <button id="start-transcription" class="primary-button">文字起こし開始</button>
+                </div>
+                <div class="task-progress" id="task-progress-row" style="display: none; margin-top: 8px;">
+                    <progress id="task-progress" max="100" value="0" style="width: 100%;"></progress>
+                    <div id="task-progress-text" style="font-size: 12px; color: #555; margin-top: 4px;">-</div>
                 </div>
             </div>
 

@@ -20,11 +20,13 @@ class WhisperApp {
         this.audio = new Audio();
         this.audio.preload = 'auto';
         this.audio.autoplay = false; // 自動再生を無効化
+        this._loadingAudio = false;
         this._blobUrl = null;
         this._triedBlobFallback = false;
         this._playbackPath = null; // 実際に再生に使うファイルパス（プレビュー等）
         this._bindAudioEvents();
         this._bindDownloadEvents();
+        this._bindTaskProgressEvents();
 
         this.initializeElements();
         this.attachEventListeners();
@@ -56,6 +58,12 @@ class WhisperApp {
         this.downloadProgressRow = document.getElementById('download-progress-row');
         this.downloadProgress = document.getElementById('download-progress');
         this.downloadProgressText = document.getElementById('download-progress-text');
+        this.fileReadProgressRow = document.getElementById('file-read-progress-row');
+        this.fileReadProgress = document.getElementById('file-read-progress');
+        this.fileReadProgressText = document.getElementById('file-read-progress-text');
+        this.taskProgressRow = document.getElementById('task-progress-row');
+        this.taskProgress = document.getElementById('task-progress');
+        this.taskProgressText = document.getElementById('task-progress-text');
         this.languageSelect = document.getElementById('language-select');
         this.translateToggle = document.getElementById('translate-toggle');
         this.useGpuServerToggle = document.getElementById('use-gpu-server-toggle');
@@ -70,6 +78,17 @@ class WhisperApp {
         this.serverEndpointInput = document.getElementById('server-endpoint-input');
         this.cpuThreadsInput = document.getElementById('cpu-threads-input');
         this.cpuThreadsMaxEl = document.getElementById('cpu-threads-max');
+    }
+
+    // 音声の読み込み中は操作を無効化
+    setUiLoadingAudio(loading) {
+        this._loadingAudio = !!loading;
+        try {
+            if (this.playPauseBtn) this.playPauseBtn.disabled = !!loading;
+            if (this.startTranscriptionBtn && !this.isTranscribing) {
+                this.startTranscriptionBtn.disabled = !!loading;
+            }
+        } catch (_) {}
     }
 
     _bindDownloadEvents() {
@@ -120,6 +139,89 @@ class WhisperApp {
         } catch (_) {
             // ignore
         }
+    }
+
+    _bindTaskProgressEvents() {
+        try {
+            const eventApi = window.__TAURI__ && window.__TAURI__.event;
+            if (!eventApi || typeof eventApi.listen !== 'function') return;
+            eventApi.listen('task-progress', (event) => {
+                const p = event && event.payload ? event.payload : {};
+                const task = p.task || '';
+                const filename = p.filename || '';
+                const done = Number(p.done || 0);
+                const total = (p.total !== undefined && p.total !== null) ? Number(p.total) : null;
+                const phase = p.phase || 'progress';
+                const msg = p.message || '';
+                const isFilePreview = (task === 'file-preview');
+                const isFileRead = (task === 'file-read');
+
+                // ターゲットUIを決定
+                let rowEl, barEl, textEl, label;
+                if (isFilePreview || isFileRead) {
+                    rowEl = this.fileReadProgressRow;
+                    barEl = this.fileReadProgress;
+                    textEl = this.fileReadProgressText;
+                    label = isFilePreview ? '読み込み(プレビュー)' : '読み込み';
+                } else {
+                    rowEl = this.taskProgressRow;
+                    barEl = this.taskProgress;
+                    textEl = this.taskProgressText;
+                    if (task === 'upload') label = 'GPUサーバへ送信';
+                    else label = '処理中';
+                }
+
+                if (rowEl) rowEl.style.display = 'block';
+
+                let percent = null;
+                if (total && total > 0) {
+                    percent = Math.max(0, Math.min(100, Math.floor((done / total) * 100)));
+                }
+
+                if (phase === 'start') {
+                    if (barEl) barEl.value = 0;
+                    if (textEl) textEl.textContent = `${label} 開始 ${filename ? '(' + filename + ')' : ''}`;
+                } else if (phase === 'progress') {
+                    if (barEl && percent !== null) barEl.value = percent;
+                    if (textEl) {
+                        if (isFileRead || isFilePreview) {
+                            // ファイル読み込みはサンプル数ベースの進捗なので％表示のみ
+                            if (percent !== null) {
+                                textEl.textContent = `${label} ${percent}% ${filename ? '(' + filename + ')' : ''}`;
+                            } else {
+                                textEl.textContent = `${label} 進行中 ${filename ? '(' + filename + ')' : ''}`;
+                            }
+                        } else {
+                            if (percent !== null) {
+                                const doneMB = (done / (1024*1024)).toFixed(1);
+                                const totalMB = total ? (total / (1024*1024)).toFixed(1) : '-';
+                                textEl.textContent = `${label} ${percent}% (${doneMB}/${totalMB} MB) ${filename ? '(' + filename + ')' : ''}`;
+                            } else {
+                                textEl.textContent = `${label} ${done} / ? ${filename ? '(' + filename + ')' : ''}`;
+                            }
+                        }
+                    }
+                } else if (phase === 'done') {
+                    if (isFilePreview) {
+                        if (barEl) barEl.value = 100;
+                        if (textEl) textEl.textContent = `読み込み完了 ${filename ? '(' + filename + ')' : ''}`;
+                        setTimeout(() => { if (rowEl) rowEl.style.display = 'none'; }, 1500);
+                    } else if (isFileRead) {
+                        // 読み込み完了後は「文字おこし中」を表示し続ける
+                        if (barEl) { try { barEl.removeAttribute('value'); } catch (_) {} }
+                        if (textEl) textEl.textContent = `文字おこし中`;
+                    } else {
+                        if (barEl) barEl.value = 100;
+                        if (textEl) textEl.textContent = `${label} 完了 ${filename ? '(' + filename + ')' : ''}`;
+                        setTimeout(() => { if (rowEl) rowEl.style.display = 'none'; }, 2000);
+                    }
+                } else if (phase === 'error') {
+                    if (textEl) textEl.textContent = `${label} エラー: ${msg}`;
+                    // 4秒後に隠す
+                    setTimeout(() => { if (rowEl) rowEl.style.display = 'none'; }, 4000);
+                }
+            });
+        } catch (_) {}
     }
 
     attachEventListeners() {
@@ -247,6 +349,8 @@ class WhisperApp {
         }
 
         try {
+            // 読み込み開始時は操作を無効化
+            this.setUiLoadingAudio(true);
             const metadata = await invoke('load_audio_metadata', { path });
             this.currentAudioPath = path;
             this.showMediaControls(metadata);
@@ -263,6 +367,8 @@ class WhisperApp {
             this.addLog(`音声ファイルを読み込みました: ${this.formatDuration(metadata.duration)}`);
         } catch (error) {
             this.addLog(`音声読み込みエラー: ${error}`);
+            // 失敗時は操作を戻す
+            this.setUiLoadingAudio(false);
         }
     }
 
@@ -462,6 +568,13 @@ class WhisperApp {
             this.isTranscribing = false;
             this.startTranscriptionBtn.disabled = false;
             this.startTranscriptionBtn.textContent = '文字起こし開始';
+            // 推移中のタスク進捗（読み込み/アップロード表示）を閉じる
+            if (this.taskProgressRow) this.taskProgressRow.style.display = 'none';
+            if (this.taskProgress) try { this.taskProgress.value = 0; } catch (_) {}
+            if (this.taskProgressText) this.taskProgressText.textContent = '-';
+            if (this.fileReadProgressRow) this.fileReadProgressRow.style.display = 'none';
+            if (this.fileReadProgress) try { this.fileReadProgress.value = 0; } catch (_) {}
+            if (this.fileReadProgressText) this.fileReadProgressText.textContent = '-';
         }
     }
 
@@ -596,6 +709,8 @@ class WhisperApp {
             this._triedBlobFallback = false;
             this._playbackPath = path;
 
+            // 新しいソースの読み込みが始まるので無効化
+            this.setUiLoadingAudio(true);
             this.audio.src = url;
             try { this.audio.load(); } catch (_) {}
             this.addLog(`audio: src set -> ${url}`);
@@ -613,6 +728,16 @@ class WhisperApp {
                 this.progressSlider.value = 0;
             }
         });
+        // 再生可能になったら操作を有効化
+        const onReady = () => {
+            if (this._loadingAudio) {
+                this.setUiLoadingAudio(false);
+                this.addLog('audio: ready');
+            }
+        };
+        this.audio.addEventListener('loadeddata', onReady);
+        this.audio.addEventListener('canplay', onReady);
+        this.audio.addEventListener('canplaythrough', onReady);
         this.audio.addEventListener('timeupdate', () => {
             if (!this.audioDuration) return;
             const cur = this.audio.currentTime;
@@ -653,11 +778,21 @@ class WhisperApp {
                 this.addLog('audio: Blob URL にフォールバックを試みます');
                 this._loadViaBlob()
                     .then((ok) => {
-                        if (ok) this.addLog('audio: Blob フォールバックを設定しました');
+                        if (ok) {
+                            this.addLog('audio: Blob フォールバックを設定しました');
+                        } else {
+                            // フォールバックも失敗
+                            this.setUiLoadingAudio(false);
+                        }
                     })
                     .catch((e) => {
                         this.addLog(`Blob フォールバックに失敗: ${e}`);
+                        this.setUiLoadingAudio(false);
                     });
+            }
+            // エラー時は一旦操作可能に戻す（ユーザーに再試行させる）
+            if (!this._triedBlobFallback) {
+                this.setUiLoadingAudio(false);
             }
         });
 
