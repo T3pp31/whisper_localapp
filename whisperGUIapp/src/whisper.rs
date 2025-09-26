@@ -16,6 +16,12 @@ pub struct WhisperEngine {
 }
 
 impl WhisperEngine {
+    /// スレッド数を動的に更新する。
+    pub fn set_threads(&mut self, n: usize) {
+        let n = n.max(1) as i32;
+        self.whisper_threads = n;
+    }
+
     /// 実行ごとのパラメータを構築するヘルパ。
     fn make_params<'a>(&'a self, language_override: Option<&'a str>) -> FullParams<'a, 'static> {
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
@@ -105,6 +111,40 @@ impl WhisperEngine {
             return Ok("(音声を認識できませんでした)".to_string());
         }
 
+        Ok(result)
+    }
+
+    /// 言語をオーバーライドしてプレーンテキストの文字起こしを実行する。
+    pub fn transcribe_with_language(&self, audio_data: &[f32], language: Option<&str>) -> Result<String> {
+        let mut state = self
+            .context
+            .create_state()
+            .map_err(|e| anyhow::anyhow!("Whisper状態の作成に失敗: {}", e))?;
+
+        if audio_data.is_empty() {
+            return Err(anyhow::anyhow!("音声データが空です"));
+        }
+
+        let params = self.make_params(language);
+        state
+            .full(params, audio_data)
+            .map_err(|e| anyhow::anyhow!("文字起こしに失敗: {}", e))?;
+
+        let segment_count = state
+            .full_n_segments()
+            .map_err(|e| anyhow::anyhow!("セグメント数の取得に失敗: {}", e))?;
+
+        let mut result = String::new();
+        for i in 0..segment_count {
+            let segment_text = state
+                .full_get_segment_text(i)
+                .map_err(|e| anyhow::anyhow!("セグメント{}のテキスト取得に失敗: {}", i, e))?;
+            result.push_str(&segment_text);
+        }
+        let result = result.trim().to_string();
+        if result.is_empty() {
+            return Ok("(音声を認識できませんでした)".to_string());
+        }
         Ok(result)
     }
 

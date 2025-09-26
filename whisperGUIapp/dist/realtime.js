@@ -11,6 +11,10 @@
   const $vuText = el('rt-vu-text');
   const $partial = el('rt-partial');
   const $final = el('rt-final');
+  const $device = el('rt-device');
+  const $language = el('rt-language');
+  const $threads = el('rt-threads');
+  const $threadsMax = el('rt-threads-max');
 
   const setStatus = (txt)=>{ $status.textContent = txt; };
   const setRunning = (running)=>{
@@ -57,10 +61,52 @@
     } catch(_){}
   }
 
+  async function populateDevices(){
+    if (!$device) return;
+    $device.innerHTML = '';
+    const optDefault = document.createElement('option');
+    optDefault.value = '';
+    optDefault.textContent = '既定のデバイス';
+    $device.appendChild(optDefault);
+    try {
+      const names = await invoke('list_input_devices');
+      if (Array.isArray(names)) {
+        for (const name of names) {
+          const opt = document.createElement('option');
+          opt.value = name;
+          opt.textContent = name;
+          $device.appendChild(opt);
+        }
+      }
+    } catch (e) {
+      // ignore, keep default option
+    }
+  }
+
+  async function initThreads(){
+    if (!$threads) return;
+    try {
+      const info = await invoke('get_performance_info');
+      const wt = (info && (info.whisperThreads ?? info.whisper_threads)) || 1;
+      const mt = (info && (info.maxThreads ?? info.max_threads)) || 1;
+      $threads.value = String(wt);
+      $threads.min = '1';
+      $threads.max = String(mt);
+      if ($threadsMax) $threadsMax.textContent = `(最大 ${mt})`;
+    } catch(e) {
+      $threads.value = '4';
+      if ($threadsMax) $threadsMax.textContent = '';
+    }
+  }
+
   $start.addEventListener('click', async ()=>{
     try {
       setStatus('starting');
-      await invoke('realtime_start', { device: null, language: null });
+      const device = ($device && $device.value) ? $device.value : null;
+      const language = ($language && $language.value) ? $language.value : null;
+      const t = $threads ? parseInt($threads.value, 10) : NaN;
+      const threads = Number.isFinite(t) && t > 0 ? t : null;
+      await invoke('realtime_start', { device, language, threads });
     } catch(e) {
       setStatus('error: ' + (e && e.toString ? e.toString() : e));
       setRunning(false);
@@ -75,5 +121,6 @@
   });
 
   initListeners();
+  populateDevices();
+  initThreads();
 })();
-

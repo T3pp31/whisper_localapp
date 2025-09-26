@@ -1245,6 +1245,7 @@ fn main() {
             realtime::realtime_start,
             realtime::realtime_stop,
             realtime::realtime_status,
+            realtime::list_input_devices,
             get_remote_server_settings,
             update_remote_server_settings,
             copy_to_clipboard,

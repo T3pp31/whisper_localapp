@@ -46,7 +46,7 @@ impl RealtimeManager {
         RealtimeStatus { running, phase: if running { "running".into() } else { "stopped".into() }, message: None }
     }
 
-    pub fn start(&mut self, app: tauri::AppHandle, device_name: Option<String>, _language: Option<String>) -> Result<()> {
+    pub fn start(&mut self, app: tauri::AppHandle, device_name: Option<String>, language: Option<String>, threads: Option<usize>) -> Result<()> {
         if self.running.load(Ordering::SeqCst) {
             return Ok(());
         }
@@ -62,6 +62,8 @@ impl RealtimeManager {
         let running2 = Arc::clone(&self.running);
         let input_sr2 = Arc::clone(&self.input_sr);
         let device_name_clone = device_name.clone();
+        let language_override = language.clone();
+        let threads_override = threads.clone();
 
         self.recog_thread = Some(std::thread::spawn(move || {
             // Load config and engine inside thread (avoid Send bound issues)
@@ -76,7 +78,7 @@ impl RealtimeManager {
                     return;
                 }
             };
-            let engine = match WhisperEngine::new(&cfg.whisper.model_path, &cfg) {
+            let mut engine = match WhisperEngine::new(&cfg.whisper.model_path, &cfg) {
                 Ok(e) => e,
                 Err(e) => {
                     let _ = app_clone.emit_all("realtime-status", serde_json::json!({
@@ -87,6 +89,9 @@ impl RealtimeManager {
                     return;
                 }
             };
+
+            // スレッド数のオーバーライドがあれば適用
+            if let Some(t) = threads_override { engine.set_threads(t); }
 
             // Setup CPAL inside thread; keep stream owned here
             let host = cpal::default_host();
@@ -215,8 +220,15 @@ impl RealtimeManager {
                             }
                         };
 
-                        // Transcribe (plain text)
-                        let text = match engine.transcribe(&resampled) {
+                        // Transcribe (plain text) with possible language override
+                        let text = match language_override.as_deref().and_then(|s| {
+                            let s = s.trim();
+                            if s.is_empty() || s.eq_ignore_ascii_case("auto") { None } else { Some(s) }
+                        }) {
+                            Some(lang) => engine.transcribe_with_language(&resampled, Some(lang)),
+                            None => engine.transcribe(&resampled),
+                        };
+                        let text = match text {
                             Ok(t) => t.trim().to_string(),
                             Err(e) => {
                                 let _ = app_clone.emit_all("realtime-status", serde_json::json!({
@@ -379,9 +391,9 @@ fn resample_mono(samples: Vec<f32>, input_rate: f64, output_rate: f64) -> Result
 
 // ===== Tauri commands =====
 #[tauri::command]
-pub fn realtime_start(app: tauri::AppHandle, device: Option<String>, language: Option<String>) -> Result<(), String> {
+pub fn realtime_start(app: tauri::AppHandle, device: Option<String>, language: Option<String>, threads: Option<usize>) -> Result<(), String> {
     let mut mgr = manager().lock().map_err(|_| "manager lock failed")?;
-    mgr.start(app, device, language).map_err(|e| e.to_string())
+    mgr.start(app, device, language, threads).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -394,4 +406,22 @@ pub fn realtime_stop(app: tauri::AppHandle) -> Result<(), String> {
 pub fn realtime_status() -> Result<RealtimeStatus, String> {
     let mgr = manager().lock().map_err(|_| "manager lock failed")?;
     Ok(mgr.status())
+}
+
+/// 入力デバイス名の一覧を返す（既定デバイスは先頭に含めず、UI側で「既定」を用意する想定）。
+#[tauri::command]
+pub fn list_input_devices() -> Result<Vec<String>, String> {
+    let host = cpal::default_host();
+    let mut names: Vec<String> = Vec::new();
+    match host.input_devices() {
+        Ok(devs) => {
+            for d in devs {
+                if let Ok(name) = d.name() { names.push(name); }
+            }
+            names.sort();
+            names.dedup();
+            Ok(names)
+        }
+        Err(e) => Err(format!("入力デバイス列挙に失敗しました: {}", e)),
+    }
 }
