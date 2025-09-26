@@ -10,9 +10,14 @@
     <div class="container">
         <header>
             <h1>Whisper 音声文字起こし</h1>
+            <nav class="tabs" aria-label="ビュー切替">
+                <button id="tab-main" class="tab active" type="button">通常</button>
+                <button id="tab-realtime" class="tab" type="button">リアルタイム</button>
+            </nav>
         </header>
 
-        <main class="main-content">
+        <!-- 通常ビュー -->
+        <main id="page-main" class="main-content" role="tabpanel" aria-labelledby="tab-main">
             <div class="left-panel">
                 <!-- 映像・音声セクション -->
                 <section class="control-section">
@@ -131,7 +136,7 @@
                 </section>
 
                 <!-- 文字起こし開始ボタン -->
-                <div class="transcription-controls">
+                <div class="transcription-controls" style="display:flex; gap:8px; align-items:center;">
                     <button id="start-transcription" class="primary-button">文字起こし開始</button>
                 </div>
                 <div class="task-progress" id="task-progress-row" style="display: none; margin-top: 8px;">
@@ -187,8 +192,54 @@
                 </section>
             </div>
         </main>
+
+        <!-- リアルタイムビュー -->
+        <section id="page-realtime" class="realtime-content" role="tabpanel" aria-labelledby="tab-realtime" style="display:none;">
+            <div class="rt-container">
+                <h2>リアルタイム文字起こし（ローカル）</h2>
+                <div class="rt-row">
+                  <label for="rt-device" style="min-width: 80px;">マイク</label>
+                  <select id="rt-device" style="min-width:240px;"></select>
+                  <span class="hint">未選択は既定デバイス</span>
+                </div>
+                <div class="rt-row">
+                  <label for="rt-language" style="min-width: 80px;">言語</label>
+                  <select id="rt-language" style="min-width:140px;">
+                    <option value="auto">自動検出</option>
+                    <option value="ja" selected>日本語</option>
+                    <option value="en">English</option>
+                    <option value="zh">中文</option>
+                    <option value="ko">한국어</option>
+                  </select>
+                </div>
+                <div class="rt-row">
+                  <label for="rt-threads" style="min-width: 80px;">CPU</label>
+                  <input id="rt-threads" type="number" min="1" step="1" style="width: 90px;">
+                  <span id="rt-threads-max" class="hint">-</span>
+                </div>
+                <div class="rt-row">
+                  <button id="rt-start">開始</button>
+                  <button id="rt-stop" disabled>停止</button>
+                  <span id="rt-status">待機中</span>
+                </div>
+                <div class="rt-row">
+                  <label>入力レベル</label>
+                  <div class="vu"><span id="rt-vu"></span></div>
+                  <span id="rt-vu-text" class="vu-text">- dB</span>
+                </div>
+                <div class="rt-row rt-column">
+                  <label>途中結果</label>
+                  <div id="rt-partial" class="area mono rt-panel"></div>
+                </div>
+                <div class="rt-row rt-column">
+                  <label>確定結果</label>
+                  <textarea id="rt-final" class="area rt-textarea" readonly placeholder="まだ結果がありません"></textarea>
+                </div>
+            </div>
+        </section>
     </div>
 
     <script src="main.js"></script>
+    <script defer src="realtime.js"></script>
 </body>
 </html>
