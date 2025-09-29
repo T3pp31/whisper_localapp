@@ -8,18 +8,11 @@
 //! - モデルの一覧・選択・ダウンロード管理
 //! - 設定の読み書きとユーザー領域への資産展開
 
-<<<<<<< HEAD
-mod audio;
-mod config;
-mod models;
-mod whisper;
-mod realtime;
-=======
 use whisperGUIapp::audio;
 use whisperGUIapp::config;
 use whisperGUIapp::models;
+use whisperGUIapp::realtime;
 use whisperGUIapp::whisper;
->>>>>>> 8958b36 (add)
 
 use whisperGUIapp::audio::AudioProcessor;
 use whisperGUIapp::config::Config;
