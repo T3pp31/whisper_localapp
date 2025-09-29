@@ -42,6 +42,10 @@ pub struct WebUIConfig {
     pub upload_prompt_text: String,
     #[serde(default = "WebUIConfig::default_upload_success_text")]
     pub upload_success_text: String,
+    #[serde(default = "WebUIConfig::default_stats_average_processing_time_label")]
+    pub stats_average_processing_time_label: String,
+    #[serde(default = "WebUIConfig::default_stats_average_processing_time_unit")]
+    pub stats_average_processing_time_unit: String,
 }
 
 impl WebUIConfig {
@@ -55,6 +59,14 @@ impl WebUIConfig {
 
     fn default_upload_success_text() -> String {
         "{filename} を選択しました".to_string()
+    }
+
+    fn default_stats_average_processing_time_label() -> String {
+        "平均処理時間 (音声1分あたりの文字起こし所要時間)".to_string()
+    }
+
+    fn default_stats_average_processing_time_unit() -> String {
+        "秒 / 音声1分".to_string()
     }
 }
 
@@ -115,6 +127,12 @@ impl Config {
             ));
         }
 
+        if self.webui.stats_average_processing_time_label.trim().is_empty() {
+            return Err(anyhow::anyhow!(
+                "平均処理時間表示ラベルが設定されていません"
+            ));
+        }
+
         Ok(())
     }
 
@@ -168,6 +186,10 @@ impl Default for Config {
                 timeline_update_interval_ms: WebUIConfig::default_timeline_update_interval_ms(),
                 upload_prompt_text: WebUIConfig::default_upload_prompt_text(),
                 upload_success_text: WebUIConfig::default_upload_success_text(),
+                stats_average_processing_time_label:
+                    WebUIConfig::default_stats_average_processing_time_label(),
+                stats_average_processing_time_unit:
+                    WebUIConfig::default_stats_average_processing_time_unit(),
             },
         }
     }

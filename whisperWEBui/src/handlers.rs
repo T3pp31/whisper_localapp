@@ -163,6 +163,8 @@ pub async fn index(State(state): State<AppState>) -> Html<String> {
     let timeline_update_ms = state.config.webui.timeline_update_interval_ms;
     let upload_prompt_text = encode_html(&state.config.webui.upload_prompt_text);
     let upload_success_text = encode_html(&state.config.webui.upload_success_text);
+    let stats_average_label = encode_html(&state.config.webui.stats_average_processing_time_label);
+    let stats_average_unit = encode_html(&state.config.webui.stats_average_processing_time_unit);
 
     let html = format!(
         r#"
@@ -175,7 +177,7 @@ pub async fn index(State(state): State<AppState>) -> Html<String> {
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
-    <div id="app-config" data-default-language="{}" data-timeline-update-ms="{}" style="display: none;"></div>
+    <div id="app-config" data-default-language="{}" data-timeline-update-ms="{}" data-stats-average-processing-time-label="{}" data-stats-average-processing-time-unit="{}" style="display: none;"></div>
     <div class="container">
         <header>
             <h1>{}</h1>
@@ -305,6 +307,8 @@ pub async fn index(State(state): State<AppState>) -> Html<String> {
         state.config.webui.title,
         default_language,
         timeline_update_ms,
+        stats_average_label,
+        stats_average_unit,
         state.config.webui.title,
         upload_prompt_text,
         upload_prompt_text,
