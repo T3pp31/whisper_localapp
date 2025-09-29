@@ -2,7 +2,6 @@ use crate::client::{WhisperClient, TranscriptionRequest};
 use crate::config::Config;
 use axum::{
     extract::{Multipart, State},
-    http::StatusCode,
     response::{Html, Json},
 };
 use serde::{Deserialize, Serialize};

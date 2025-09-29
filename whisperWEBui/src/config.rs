@@ -13,12 +13,20 @@ pub struct Config {
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
+    #[serde(default = "ServerConfig::default_max_request_size_mb")]
+    pub max_request_size_mb: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackendConfig {
     pub base_url: String,
     pub timeout_seconds: u64,
+}
+
+impl ServerConfig {
+    fn default_max_request_size_mb() -> u64 {
+        110
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +59,14 @@ impl Config {
             return Err(anyhow::anyhow!("サーバーポートが無効です"));
         }
 
+        if self.server.max_request_size_mb == 0 {
+            return Err(anyhow::anyhow!("最大リクエストサイズが無効です"));
+        }
+
+        if self.server.max_request_size_mb < self.webui.max_file_size_mb {
+            return Err(anyhow::anyhow!("最大リクエストサイズは最大ファイルサイズ以上である必要があります"));
+        }
+
         if self.backend.base_url.is_empty() {
             return Err(anyhow::anyhow!("バックエンドURLが設定されていません"));
         }
@@ -70,6 +86,10 @@ impl Config {
         (self.webui.max_file_size_mb * 1024 * 1024) as usize
     }
 
+    pub fn max_request_size_bytes(&self) -> usize {
+        (self.server.max_request_size_mb * 1024 * 1024) as usize
+    }
+
     pub fn is_allowed_extension(&self, extension: &str) -> bool {
         self.webui.allowed_extensions
             .iter()
@@ -83,6 +103,7 @@ impl Default for Config {
             server: ServerConfig {
                 host: "127.0.0.1".to_string(),
                 port: 3000,
+                max_request_size_mb: ServerConfig::default_max_request_size_mb(),
             },
             backend: BackendConfig {
                 base_url: "http://127.0.0.1:8000".to_string(),

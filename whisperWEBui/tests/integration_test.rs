@@ -72,6 +72,13 @@ async fn test_config_validation() {
     assert!(config.validate().is_err());
 
     config.server.port = 3000;
+    config.server.max_request_size_mb = 0;
+    assert!(config.validate().is_err());
+
+    config.server.max_request_size_mb = config.webui.max_file_size_mb.saturating_sub(1);
+    assert!(config.validate().is_err());
+
+    config.server.max_request_size_mb = config.webui.max_file_size_mb + 10;
     config.backend.base_url = String::new();
     assert!(config.validate().is_err());
 
@@ -97,6 +104,13 @@ async fn test_max_file_size_calculation() {
     let config = Config::default();
     let expected_bytes = config.webui.max_file_size_mb * 1024 * 1024;
     assert_eq!(config.max_file_size_bytes(), expected_bytes as usize);
+}
+
+#[tokio::test]
+async fn test_max_request_size_calculation() {
+    let config = Config::default();
+    let expected_bytes = config.server.max_request_size_mb * 1024 * 1024;
+    assert_eq!(config.max_request_size_bytes(), expected_bytes as usize);
 }
 
 #[tokio::test]

@@ -4,6 +4,7 @@ pub mod handlers;
 
 use crate::handlers::AppState;
 use axum::{
+    extract::DefaultBodyLimit,
     routing::{get, post},
     Router,
 };
@@ -20,6 +21,8 @@ pub fn create_app(app_state: AppState) -> Router {
         .allow_methods(Any)
         .allow_headers(Any);
 
+    let max_request_size = app_state.config.max_request_size_bytes();
+
     Router::new()
         .route("/", get(handlers::index))
         .route("/api/upload", post(handlers::upload_file))
@@ -33,6 +36,7 @@ pub fn create_app(app_state: AppState) -> Router {
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
                 .layer(cors)
+                .layer(DefaultBodyLimit::max(max_request_size))
         )
         .with_state(app_state)
 }
