@@ -8,16 +8,23 @@
 //! - モデルの一覧・選択・ダウンロード管理
 //! - 設定の読み書きとユーザー領域への資産展開
 
+<<<<<<< HEAD
 mod audio;
 mod config;
 mod models;
 mod whisper;
 mod realtime;
+=======
+use whisperGUIapp::audio;
+use whisperGUIapp::config;
+use whisperGUIapp::models;
+use whisperGUIapp::whisper;
+>>>>>>> 8958b36 (add)
 
-use audio::{AudioProcessor};
-use config::Config;
-use models::MODEL_CATALOG;
-use whisper::WhisperEngine;
+use whisperGUIapp::audio::AudioProcessor;
+use whisperGUIapp::config::Config;
+use whisperGUIapp::models::MODEL_CATALOG;
+use whisperGUIapp::whisper::WhisperEngine;
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -736,7 +743,9 @@ async fn transcribe_via_remote(
             form = form.text("language", lang_trim.to_string());
         }
 
-        let client = reqwest::blocking::Client::builder().build()
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(config.whisper.request_timeout_secs))
+            .build()
             .map_err(|e| format!("HTTPクライアント初期化に失敗しました: {}", e))?;
         let resp = client
             .post(&endpoint_clone)
@@ -938,8 +947,17 @@ async fn download_model(model_id: String, app: tauri::AppHandle, state: State<'_
     let app_cloned = app.clone();
     let model_id_cloned = model_id.clone();
     let filename_cloned = filename.clone();
+    // タイムアウト秒を設定から取得
+    let timeout_secs = {
+        let cfg = state
+            .config
+            .lock()
+            .map_err(|_| "設定の読み込みに失敗しました")?;
+        cfg.whisper.request_timeout_secs
+    };
+
     tokio::task::spawn_blocking(move || {
-        download_to_file_with_progress(&app_cloned, &model_id_cloned, &filename_cloned, &url_cloned, &dest_cloned)
+        download_to_file_with_progress(&app_cloned, &model_id_cloned, &filename_cloned, &url_cloned, &dest_cloned, timeout_secs)
     })
     .await
     .map_err(|e| format!("ダウンロードスレッドの実行に失敗しました: {}", e))?
@@ -962,6 +980,14 @@ async fn download_all_models(app: tauri::AppHandle, state: State<'_, AppState>) 
         .map_err(|e| format!("models ディレクトリの作成に失敗しました: {}", e))?;
 
     let mut downloaded = Vec::new();
+    // タイムアウト秒を設定から取得
+    let timeout_secs = {
+        let cfg = state
+            .config
+            .lock()
+            .map_err(|_| "設定の読み込みに失敗しました")?;
+        cfg.whisper.request_timeout_secs
+    };
     for def in MODEL_CATALOG {
         let dest = models_dir.join(def.filename);
         if dest.exists() {
@@ -972,7 +998,7 @@ async fn download_all_models(app: tauri::AppHandle, state: State<'_, AppState>) 
         let app_cloned = app.clone();
         let id = def.id.to_string();
         let filename = def.filename.to_string();
-        tokio::task::spawn_blocking(move || download_to_file_with_progress(&app_cloned, &id, &filename, &url, &dest_cloned))
+        tokio::task::spawn_blocking(move || download_to_file_with_progress(&app_cloned, &id, &filename, &url, &dest_cloned, timeout_secs))
             .await
             .map_err(|e| format!("ダウンロードスレッドの実行に失敗しました: {}", e))?
             .map_err(|e| format!("{} のダウンロードに失敗しました: {}", def.filename, e))?;
@@ -988,8 +1014,11 @@ fn download_to_file_with_progress(
     filename: &str,
     url: &str,
     dest: &std::path::Path,
+    request_timeout_secs: u64,
 ) -> anyhow::Result<()> {
-    let client = reqwest::blocking::Client::builder().build()?;
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(request_timeout_secs))
+        .build()?;
     let mut resp = client.get(url).send()?;
     if !resp.status().is_success() {
         let msg = format!("HTTP {}", resp.status());
@@ -1210,13 +1239,13 @@ fn main() {
             if !std::path::Path::new(&config_guard.whisper.model_path).exists() {
                 let default_id = config_guard.whisper.default_model.clone();
                 let mut candidate = None;
-                if let Some(def) = crate::models::get_model_definition(&default_id) {
+                if let Some(def) = models::get_model_definition(&default_id) {
                     let p = std::path::Path::new(&config_guard.paths.models_dir).join(def.filename);
                     if p.exists() { candidate = Some(p); }
                 }
                 if candidate.is_none() {
                     // カタログ中で存在する最初のモデル
-                    for def in crate::models::MODEL_CATALOG {
+                    for def in models::MODEL_CATALOG {
                         let p = std::path::Path::new(&config_guard.paths.models_dir).join(def.filename);
                         if p.exists() { candidate = Some(p); break; }
                     }

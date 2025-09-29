@@ -31,6 +31,10 @@ pub struct WhisperConfig {
     pub remote_server_url: String,
     #[serde(default = "default_remote_server_endpoint")]
     pub remote_server_endpoint: String,
+    /// HTTPリクエスト全体のタイムアウト秒数（reqwest の default request timeout）
+    /// 既存設定との互換のためデフォルト 600 秒（10分）を付与
+    #[serde(default = "default_request_timeout_secs")]
+    pub request_timeout_secs: u64,
 }
 
 /// 音声処理（前処理）に関する設定。
@@ -128,6 +132,7 @@ impl Default for Config {
                 use_remote_server: false,
                 remote_server_url: default_remote_server_url(),
                 remote_server_endpoint: default_remote_server_endpoint(),
+                request_timeout_secs: default_request_timeout_secs(),
             },
             audio: AudioConfig {
                 sample_rate: 16000,
@@ -174,4 +179,14 @@ fn default_remote_server_url() -> String {
 
 fn default_remote_server_endpoint() -> String {
     "/transcribe-with-timestamps".to_string()
+}
+
+fn default_request_timeout_secs() -> u64 {
+    600
+}
+
+impl WhisperConfig {
+    pub fn request_timeout_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.request_timeout_secs)
+    }
 }
