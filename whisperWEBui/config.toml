@@ -1,0 +1,12 @@
+[server]
+host = "127.0.0.1"
+port = 3001
+
+[backend]
+base_url = "http://127.0.0.1:8000"
+timeout_seconds = 300
+
+[webui]
+title = "Whisper WebUI"
+max_file_size_mb = 100
+allowed_extensions = ["wav", "mp3", "m4a", "flac", "ogg", "mp4", "mov", "avi", "mkv"]
