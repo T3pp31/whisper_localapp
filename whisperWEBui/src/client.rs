@@ -224,18 +224,32 @@ impl TimestampedTranscriptionResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HealthResponse {
     pub status: String,
-    pub uptime_seconds: f64,
-    pub whisper_loaded: bool,
-    pub version: String,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub model_loaded: bool,
+    #[serde(default)]
+    pub uptime_seconds: u64,
+    #[serde(default)]
+    pub memory_usage_mb: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StatsResponse {
-    pub requests_total: u64,
-    pub requests_successful: u64,
-    pub requests_failed: u64,
-    pub uptime_seconds: f64,
-    pub average_processing_time: Option<f64>,
+    #[serde(default)]
+    pub total_requests: u64,
+    #[serde(default)]
+    pub successful_transcriptions: u64,
+    #[serde(default)]
+    pub failed_transcriptions: u64,
+    #[serde(default)]
+    pub total_processing_time_ms: u64,
+    #[serde(default)]
+    pub average_processing_time_ms: f64,
+    #[serde(default)]
+    pub active_requests: usize,
+    #[serde(default)]
+    pub uptime_seconds: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -257,11 +271,24 @@ pub struct Language {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GpuStatusResponse {
-    pub gpu_available: bool,
-    pub gpu_name: Option<String>,
-    pub gpu_memory_total: Option<u64>,
-    pub gpu_memory_used: Option<u64>,
-    pub gpu_utilization: Option<f32>,
+    #[serde(default)]
+    pub gpu_enabled_in_config: bool,
+    #[serde(default)]
+    pub gpu_actually_enabled: bool,
+    #[serde(default)]
+    pub model_info: Option<GpuModelInfo>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GpuModelInfo {
+    #[serde(default)]
+    pub is_loaded: bool,
+    #[serde(default)]
+    pub language: Option<String>,
+    #[serde(default)]
+    pub threads: i32,
+    #[serde(default)]
+    pub enable_gpu: bool,
 }
 
 #[derive(Debug)]
@@ -374,12 +401,12 @@ impl WhisperClient {
             )));
         }
 
-        let languages_response: LanguagesResponse = response
+        let languages: Vec<Language> = response
             .json()
             .await
             .map_err(|e| ClientError::InvalidResponse(format!("JSONパースエラー: {}", e)))?;
 
-        Ok(languages_response)
+        Ok(LanguagesResponse { languages })
     }
 
     pub async fn get_gpu_status(&self) -> Result<GpuStatusResponse, ClientError> {

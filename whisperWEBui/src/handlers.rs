@@ -1,4 +1,10 @@
-use crate::client::{TranscriptionRequest, WhisperClient};
+use crate::client::{
+    GpuStatusResponse,
+    HealthResponse,
+    StatsResponse,
+    TranscriptionRequest,
+    WhisperClient,
+};
 use crate::config::Config;
 use axum::{
     extract::{Multipart, State},
@@ -52,6 +58,90 @@ pub struct UploadResponse {
 pub struct ErrorResponse {
     pub success: bool,
     pub error: String,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq)]
+pub struct FrontendHealth {
+    pub status: String,
+    pub version: Option<String>,
+    pub whisper_loaded: bool,
+    pub uptime_seconds: u64,
+    pub memory_usage_mb: Option<u64>,
+}
+
+pub fn map_health_response(health: HealthResponse) -> FrontendHealth {
+    FrontendHealth {
+        status: health.status,
+        version: health.version.and_then(|v| {
+            let trimmed = v.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }),
+        whisper_loaded: health.model_loaded,
+        uptime_seconds: health.uptime_seconds,
+        memory_usage_mb: health.memory_usage_mb,
+    }
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq)]
+pub struct FrontendStats {
+    pub requests_total: u64,
+    pub requests_successful: u64,
+    pub requests_failed: u64,
+    pub uptime_seconds: u64,
+    pub average_processing_time: Option<f64>,
+    pub active_requests: usize,
+}
+
+pub fn map_stats_response(stats: StatsResponse) -> FrontendStats {
+    let average_processing_time = if stats.successful_transcriptions > 0 {
+        Some(stats.average_processing_time_ms / 1000.0)
+    } else {
+        None
+    };
+
+    FrontendStats {
+        requests_total: stats.total_requests,
+        requests_successful: stats.successful_transcriptions,
+        requests_failed: stats.failed_transcriptions,
+        uptime_seconds: stats.uptime_seconds,
+        average_processing_time,
+        active_requests: stats.active_requests,
+    }
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq)]
+pub struct FrontendGpuStatus {
+    pub gpu_available: bool,
+    pub gpu_name: Option<String>,
+    pub gpu_enabled_in_config: bool,
+}
+
+pub fn map_gpu_status_response(status: GpuStatusResponse) -> FrontendGpuStatus {
+    let gpu_available = if status.gpu_actually_enabled {
+        true
+    } else {
+        status
+            .model_info
+            .as_ref()
+            .map(|info| info.enable_gpu && info.is_loaded)
+            .unwrap_or(false)
+    };
+
+    let gpu_name = if gpu_available {
+        Some("GPU".to_string())
+    } else {
+        None
+    };
+
+    FrontendGpuStatus {
+        gpu_available,
+        gpu_name,
+        gpu_enabled_in_config: status.gpu_enabled_in_config,
+    }
 }
 
 pub async fn index(State(state): State<AppState>) -> Html<String> {
@@ -375,10 +465,13 @@ pub async fn upload_file(
 
 pub async fn backend_health(State(state): State<AppState>) -> Json<serde_json::Value> {
     match state.client.health_check().await {
-        Ok(health) => Json(json!({
-            "success": true,
-            "data": health
-        })),
+        Ok(health) => {
+            let mapped = map_health_response(health);
+            Json(json!({
+                "success": true,
+                "data": mapped
+            }))
+        },
         Err(e) => Json(json!({
             "success": false,
             "error": e.to_string()
@@ -388,10 +481,13 @@ pub async fn backend_health(State(state): State<AppState>) -> Json<serde_json::V
 
 pub async fn backend_stats(State(state): State<AppState>) -> Json<serde_json::Value> {
     match state.client.get_stats().await {
-        Ok(stats) => Json(json!({
-            "success": true,
-            "data": stats
-        })),
+        Ok(stats) => {
+            let mapped = map_stats_response(stats);
+            Json(json!({
+                "success": true,
+                "data": mapped
+            }))
+        },
         Err(e) => Json(json!({
             "success": false,
             "error": e.to_string()
@@ -414,9 +510,11 @@ pub async fn backend_models(State(state): State<AppState>) -> Json<serde_json::V
 
 pub async fn backend_languages(State(state): State<AppState>) -> Json<serde_json::Value> {
     match state.client.get_languages().await {
-        Ok(languages) => Json(json!({
+        Ok(languages_response) => Json(json!({
             "success": true,
-            "data": languages
+            "data": {
+                "languages": languages_response.languages
+            }
         })),
         Err(e) => Json(json!({
             "success": false,
@@ -427,10 +525,13 @@ pub async fn backend_languages(State(state): State<AppState>) -> Json<serde_json
 
 pub async fn backend_gpu_status(State(state): State<AppState>) -> Json<serde_json::Value> {
     match state.client.get_gpu_status().await {
-        Ok(gpu_status) => Json(json!({
-            "success": true,
-            "data": gpu_status
-        })),
+        Ok(gpu_status) => {
+            let mapped = map_gpu_status_response(gpu_status);
+            Json(json!({
+                "success": true,
+                "data": mapped
+            }))
+        },
         Err(e) => Json(json!({
             "success": false,
             "error": e.to_string()

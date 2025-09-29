@@ -97,14 +97,20 @@ class WhisperWebUI {
     }
 
     async checkBackendHealth() {
+        const statusEl = document.getElementById('backend-status');
+        if (!statusEl) {
+            return;
+        }
+
         try {
             const response = await fetch('/api/health');
             const data = await response.json();
 
-            const statusEl = document.getElementById('backend-status');
-            if (data.success && data.data.status === 'healthy') {
-                statusEl.textContent = 'オンライン';
-                statusEl.className = 'status-value online';
+            if (data.success && data.data) {
+                const backendStatus = (data.data.status || '').toString().toLowerCase();
+                const isHealthy = backendStatus === 'healthy' || backendStatus === 'ok';
+                statusEl.textContent = isHealthy ? 'オンライン' : 'オフライン';
+                statusEl.className = `status-value ${isHealthy ? 'online' : 'offline'}`;
             } else {
                 statusEl.textContent = 'オフライン';
                 statusEl.className = 'status-value offline';
@@ -112,28 +118,50 @@ class WhisperWebUI {
 
             await this.checkGPUStatus();
         } catch (error) {
-            const statusEl = document.getElementById('backend-status');
             statusEl.textContent = 'エラー';
             statusEl.className = 'status-value offline';
             console.error('Backend health check failed:', error);
+            await this.checkGPUStatus();
         }
     }
 
     async checkGPUStatus() {
+        const gpuStatusEl = document.getElementById('gpu-status');
+        if (!gpuStatusEl) {
+            return;
+        }
+        const gpuContainer = gpuStatusEl.parentElement;
+        if (!gpuContainer) {
+            return;
+        }
+
+        const showContainer = () => {
+            gpuContainer.style.display = '';
+        };
+
         try {
             const response = await fetch('/api/gpu-status');
             const data = await response.json();
 
-            const gpuStatusEl = document.getElementById('gpu-status');
-            if (data.success && data.data.gpu_available) {
-                gpuStatusEl.textContent = `${data.data.gpu_name || 'GPU'}利用可能`;
-                gpuStatusEl.className = 'status-value online';
+            if (data.success && data.data) {
+                showContainer();
+                if (data.data.gpu_available) {
+                    const label = data.data.gpu_name ? `${data.data.gpu_name}利用中` : 'GPU利用中';
+                    gpuStatusEl.textContent = label;
+                    gpuStatusEl.className = 'status-value online';
+                } else {
+                    gpuStatusEl.textContent = data.data.gpu_enabled_in_config ? 'GPU未使用' : 'GPU未設定';
+                    gpuStatusEl.className = 'status-value';
+                }
             } else {
-                gpuStatusEl.textContent = 'CPU';
-                gpuStatusEl.className = 'status-value';
+                showContainer();
+                gpuStatusEl.textContent = '情報取得に失敗';
+                gpuStatusEl.className = 'status-value offline';
             }
         } catch (error) {
-            document.getElementById('gpu-status').textContent = '不明';
+            showContainer();
+            gpuStatusEl.textContent = '情報取得に失敗';
+            gpuStatusEl.className = 'status-value offline';
             console.error('GPU status check failed:', error);
         }
     }
@@ -180,48 +208,89 @@ class WhisperWebUI {
     }
 
     async loadServerInfo() {
+        const container = document.getElementById('server-info');
+        if (!container) {
+            return;
+        }
+
         try {
             const response = await fetch('/api/health');
             const data = await response.json();
 
-            if (data.success) {
+            if (data.success && data.data) {
                 const info = data.data;
-                document.getElementById('server-info').innerHTML = `
-                    <div>ステータス: ${info.status}</div>
-                    <div>稼働時間: ${Math.floor(info.uptime_seconds / 3600)}時間 ${Math.floor((info.uptime_seconds % 3600) / 60)}分</div>
-                    <div>Whisperエンジン: ${info.whisper_loaded ? '読み込み済み' : '未読み込み'}</div>
-                    <div>バージョン: ${info.version || 'N/A'}</div>
-                `;
+                const uptimeSeconds = Number(info.uptime_seconds) || 0;
+                const hours = Math.floor(uptimeSeconds / 3600);
+                const minutes = Math.floor((uptimeSeconds % 3600) / 60);
+                const versionText = info.version ?? 'N/A';
+                const parts = [
+                    `<div>ステータス: ${info.status || '不明'}</div>`,
+                    `<div>稼働時間: ${hours}時間 ${minutes}分</div>`,
+                    `<div>Whisperエンジン: ${info.whisper_loaded ? '読み込み済み' : '未読み込み'}</div>`,
+                    `<div>バージョン: ${versionText}</div>`,
+                ];
+
+                if (info.memory_usage_mb !== null && info.memory_usage_mb !== undefined) {
+                    parts.push(`<div>メモリ使用量: ${info.memory_usage_mb}MB</div>`);
+                }
+
+                container.innerHTML = parts.join('');
+            } else {
+                const message = data && data.error
+                    ? `サーバー情報の取得に失敗しました: ${data.error}`
+                    : 'サーバー情報の取得に失敗しました';
+                container.textContent = message;
             }
         } catch (error) {
-            document.getElementById('server-info').innerHTML = 'サーバー情報の取得に失敗しました';
+            container.textContent = 'サーバー情報の取得に失敗しました';
+            console.error('Failed to load server info:', error);
         }
     }
 
     async loadStats() {
+        const container = document.getElementById('stats-info');
+        if (!container) {
+            return;
+        }
+
         try {
             const response = await fetch('/api/stats');
             const data = await response.json();
 
-            if (data.success) {
+            if (data.success && data.data) {
                 const stats = data.data;
-                const successRate = stats.requests_total > 0
-                    ? ((stats.requests_successful / stats.requests_total) * 100).toFixed(1)
-                    : 0;
+                const total = Number(stats.requests_total) || 0;
+                const successful = Number(stats.requests_successful) || 0;
+                const failed = Number(stats.requests_failed) || 0;
+                const successRate = total > 0
+                    ? ((successful / total) * 100).toFixed(1)
+                    : '0.0';
 
-                document.getElementById('stats-info').innerHTML = `
-                    <div>総リクエスト数: ${stats.requests_total}</div>
-                    <div>成功: ${stats.requests_successful}</div>
-                    <div>失敗: ${stats.requests_failed}</div>
-                    <div>成功率: ${successRate}%</div>
-                    ${stats.average_processing_time
-                        ? `<div>平均処理時間: ${stats.average_processing_time.toFixed(2)}秒</div>`
-                        : ''
-                    }
-                `;
+                const parts = [
+                    `<div>総リクエスト数: ${total}</div>`,
+                    `<div>成功: ${successful}</div>`,
+                    `<div>失敗: ${failed}</div>`,
+                    `<div>成功率: ${successRate}%</div>`,
+                ];
+
+                if (typeof stats.average_processing_time === 'number' && stats.average_processing_time > 0) {
+                    parts.push(`<div>平均処理時間: ${stats.average_processing_time.toFixed(2)}秒</div>`);
+                }
+
+                if (typeof stats.active_requests === 'number') {
+                    parts.push(`<div>稼働中リクエスト: ${stats.active_requests}</div>`);
+                }
+
+                container.innerHTML = parts.join('');
+            } else {
+                const message = data && data.error
+                    ? `統計情報の取得に失敗しました: ${data.error}`
+                    : '統計情報の取得に失敗しました';
+                container.textContent = message;
             }
         } catch (error) {
-            document.getElementById('stats-info').innerHTML = '統計情報の取得に失敗しました';
+            container.textContent = '統計情報の取得に失敗しました';
+            console.error('Failed to load stats:', error);
         }
     }
 
