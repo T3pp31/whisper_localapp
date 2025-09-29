@@ -14,6 +14,9 @@ class WhisperWebUI {
         this.timelineProgress = document.getElementById('timeline-progress');
         this.timelineSegmentsContainer = document.getElementById('timeline-segments');
         this.notificationCloseBtn = document.getElementById('notification-close');
+        this.transcribeButton = document.getElementById('transcribe-btn');
+        this.transcribeButtonLabel = this.transcribeButton?.dataset.label?.trim() || this.transcribeButton?.textContent || '';
+        this.transcribeButtonLoadingLabel = this.transcribeButton?.dataset.loadingLabel?.trim() || '文字起こし中...';
 
         this.appConfig = document.getElementById('app-config');
         const configDefaultLanguage = this.appConfig?.dataset.defaultLanguage?.trim();
@@ -30,6 +33,7 @@ class WhisperWebUI {
         this.currentSegments = [];
         this.timelineData = { segments: [], duration: 0 };
         this.lastTimelineUpdate = 0;
+        this.isUploading = false;
 
         this.init();
     }
@@ -38,6 +42,7 @@ class WhisperWebUI {
         this.setupEventListeners();
         this.applyDefaultLanguageOption();
         this.loadInitialData();
+        this.updateTranscribeButtonState();
     }
 
     setupEventListeners() {
@@ -58,6 +63,10 @@ class WhisperWebUI {
         document.getElementById('clear-results-btn')?.addEventListener('click', () => this.clearResults());
 
         this.notificationCloseBtn?.addEventListener('click', () => this.hideNotification());
+
+        if (this.transcribeButton) {
+            this.transcribeButton.addEventListener('click', () => this.handleTranscribeRequest());
+        }
 
         if (this.timelineContainer) {
             this.timelineContainer.addEventListener('click', (event) => this.handleTimelineClick(event));
@@ -240,8 +249,21 @@ class WhisperWebUI {
 
         this.currentFile = file;
         this.prepareAudio(file);
-        this.showNotification(`ファイル選択: ${file.name}`, 'success');
-        this.uploadFile();
+        this.showNotification(`ファイル選択: ${file.name}。文字起こしボタンをクリックして開始してください`, 'success');
+        this.updateTranscribeButtonState();
+    }
+
+    handleTranscribeRequest() {
+        if (!this.currentFile) {
+            this.showNotification('音声ファイルを選択してください', 'error');
+            return;
+        }
+
+        if (this.isUploading) {
+            return;
+        }
+
+        void this.uploadFile();
     }
 
     isFileAllowed(file) {
@@ -280,7 +302,17 @@ class WhisperWebUI {
     }
 
     async uploadFile() {
-        if (!this.currentFile) return;
+        if (!this.currentFile) {
+            this.showNotification('音声ファイルを選択してください', 'error');
+            return;
+        }
+
+        if (this.isUploading) {
+            return;
+        }
+
+        this.isUploading = true;
+        this.updateTranscribeButtonState();
 
         const formData = new FormData();
         formData.append('file', this.currentFile);
@@ -318,8 +350,23 @@ class WhisperWebUI {
             console.error('Upload failed:', error);
         } finally {
             this.hideProgress();
+            this.isUploading = false;
+            this.updateTranscribeButtonState();
             await this.loadStats();
         }
+    }
+
+    updateTranscribeButtonState() {
+        if (!this.transcribeButton) {
+            return;
+        }
+
+        const disabled = !this.currentFile || this.isUploading;
+        this.transcribeButton.disabled = disabled;
+
+        const label = this.transcribeButtonLabel || '文字起こしを開始';
+        const loadingLabel = this.transcribeButtonLoadingLabel || label;
+        this.transcribeButton.textContent = this.isUploading ? loadingLabel : label;
     }
 
     displayResults(data, withTimestamps) {
@@ -655,6 +702,8 @@ class WhisperWebUI {
         if (this.timelineProgress) {
             this.timelineProgress.style.width = '0%';
         }
+
+        this.updateTranscribeButtonState();
     }
 }
 

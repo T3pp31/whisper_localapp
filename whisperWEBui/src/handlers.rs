@@ -128,6 +128,10 @@ pub async fn index(State(state): State<AppState>) -> Html<String> {
                         <label for="no-speech-threshold">無音閾値 (0.0-1.0):</label>
                         <input type="number" id="no-speech-threshold" min="0" max="1" step="0.1" placeholder="0.6">
                     </div>
+
+                    <div class="option-group action-group">
+                        <button id="transcribe-btn" class="btn btn-primary" type="button" disabled data-label="文字起こしを開始" data-loading-label="文字起こし中...">文字起こしを開始</button>
+                    </div>
                 </div>
             </div>
 

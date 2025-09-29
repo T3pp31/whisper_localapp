@@ -149,3 +149,26 @@ async fn test_index_contains_language_and_timeline_config() {
     assert!(html.contains("data-default-language=\"ja\""));
     assert!(html.contains("data-timeline-update-ms=\"250\""));
 }
+
+#[tokio::test]
+async fn test_index_contains_transcribe_button() {
+    let config = Config::default();
+    let app_state = AppState::new(config);
+    let app = whisper_webui::create_app(app_state);
+
+    let request = Request::builder()
+        .uri("/")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let html = String::from_utf8(body.to_vec()).unwrap();
+
+    assert!(html.contains("id=\"transcribe-btn\""));
+    assert!(html.contains("data-loading-label=\"文字起こし中...\""));
+}

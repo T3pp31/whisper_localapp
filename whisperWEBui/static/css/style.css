@@ -163,6 +163,13 @@ main {
     border-radius: 10px;
 }
 
+.options-panel .option-group.action-group {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: flex-end;
+    align-items: flex-end;
+}
+
 .option-group {
     display: flex;
     flex-direction: column;
@@ -226,6 +233,20 @@ main {
     display: inline-flex;
     align-items: center;
     gap: 5px;
+}
+
+.btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+.btn-primary {
+    background: #4299e1;
+    color: #ffffff;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background: #3182ce;
 }
 
 .btn-secondary {
