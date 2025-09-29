@@ -3,14 +3,14 @@ use axum::{
     http::{Request, StatusCode},
     response::Response,
 };
-use tower::ServiceExt;
 use serde_json::Value;
 use std::fs;
 use tempfile::TempDir;
+use tower::ServiceExt;
 use WhisperBackendAPI::{
     config::Config,
-    handlers::{AppState, ApiError},
-    models::{*, ApiErrorCode},
+    handlers::{ApiError, AppState},
+    models::{ApiErrorCode, *},
     whisper::WhisperEngine,
 };
 
@@ -75,7 +75,11 @@ mod handlers_tests {
 
             // モックのWhisperEngineを作成（実際のテストでは実際のエンジンは使用しない）
             // ここではAppStateの構造をテストするだけ
-            assert!(app_state.config.whisper.model_path.contains("test_model.bin"));
+            assert!(app_state
+                .config
+                .whisper
+                .model_path
+                .contains("test_model.bin"));
         }
 
         #[test]
@@ -93,7 +97,9 @@ mod handlers_tests {
             let original_time = app_state.start_time.elapsed();
             let cloned_time = cloned.start_time.elapsed();
             // 時間差が1ms以内であることを確認
-            assert!((original_time.as_millis() as i128 - cloned_time.as_millis() as i128).abs() < 2);
+            assert!(
+                (original_time.as_millis() as i128 - cloned_time.as_millis() as i128).abs() < 2
+            );
         }
     }
 
@@ -117,7 +123,10 @@ mod handlers_tests {
 
             assert!(matches!(error.code, ApiErrorCode::ProcessingFailed));
             assert_eq!(error.message, "Failed to process");
-            assert_eq!(error.details, Some("Stack trace or additional info".to_string()));
+            assert_eq!(
+                error.details,
+                Some("Stack trace or additional info".to_string())
+            );
         }
 
         #[test]
@@ -156,7 +165,7 @@ mod handlers_tests {
             // エラーが発生しないことが重要
             match memory_usage {
                 Some(mb) => assert!(mb > 0), // 何らかの正の値
-                None => {}, // 取得できない場合もある
+                None => {}                   // 取得できない場合もある
             }
         }
 
@@ -175,8 +184,8 @@ mod handlers_tests {
     mod gpu_status_tests {
         use super::*;
         use WhisperBackendAPI::handlers::{
-            GpuStatusResponse, GpuEnvironmentInfo, GpuLibraryInfo,
-            detect_gpu_libraries, generate_gpu_recommendations
+            detect_gpu_libraries, generate_gpu_recommendations, GpuEnvironmentInfo, GpuLibraryInfo,
+            GpuStatusResponse,
         };
 
         #[test]
@@ -189,12 +198,16 @@ mod handlers_tests {
             // プラットフォームに関係なく何らかの情報が返されることを確認
             if cfg!(target_os = "linux") {
                 // Linuxでは具体的なライブラリ検出を試行
-                assert!(gpu_info.detection_notes.iter().any(|note|
-                    note.contains("CUDA") || note.contains("OpenCL")));
+                assert!(gpu_info
+                    .detection_notes
+                    .iter()
+                    .any(|note| note.contains("CUDA") || note.contains("OpenCL")));
             } else {
                 // Linux以外では未実装メッセージが含まれる
-                assert!(gpu_info.detection_notes.iter().any(|note|
-                    note.contains("not implemented for this platform")));
+                assert!(gpu_info
+                    .detection_notes
+                    .iter()
+                    .any(|note| note.contains("not implemented for this platform")));
             }
         }
 
@@ -206,7 +219,9 @@ mod handlers_tests {
             let recommendations = generate_gpu_recommendations(&app_state.config, false);
 
             assert!(!recommendations.is_empty());
-            assert!(recommendations.iter().any(|rec| rec.contains("CPU処理で動作しています")));
+            assert!(recommendations
+                .iter()
+                .any(|rec| rec.contains("CPU処理で動作しています")));
         }
 
         #[test]
@@ -218,8 +233,15 @@ mod handlers_tests {
             let recommendations = generate_gpu_recommendations(&config, false);
 
             assert!(!recommendations.is_empty());
-            assert!(recommendations.iter().any(|rec| rec.contains("GPUが設定で有効化されているが実際には使用されていません")));
-            assert!(recommendations.iter().any(|rec| rec.contains("リビルドしてください")));
+            assert!(
+                recommendations
+                    .iter()
+                    .any(|rec| rec
+                        .contains("GPUが設定で有効化されているが実際には使用されていません"))
+            );
+            assert!(recommendations
+                .iter()
+                .any(|rec| rec.contains("リビルドしてください")));
         }
 
         #[test]
@@ -231,7 +253,9 @@ mod handlers_tests {
             let recommendations = generate_gpu_recommendations(&config, true);
 
             assert!(!recommendations.is_empty());
-            assert!(recommendations.iter().any(|rec| rec.contains("GPU加速が正常に有効化されています")));
+            assert!(recommendations
+                .iter()
+                .any(|rec| rec.contains("GPU加速が正常に有効化されています")));
         }
 
         #[test]
@@ -287,6 +311,12 @@ mod handlers_tests {
             assert_eq!(stats.total_requests, 0);
             assert_eq!(stats.successful_transcriptions, 0);
             assert_eq!(stats.failed_transcriptions, 0);
+            assert_eq!(stats.average_processing_time_ms, 0.0);
+            assert_eq!(stats.average_processing_time_one_minute_ms, 0.0);
+            assert_eq!(
+                stats.average_processing_time_one_minute_display,
+                "0.00 s/min"
+            );
         }
 
         #[test]
@@ -305,6 +335,11 @@ mod handlers_tests {
             assert_eq!(stats.successful_transcriptions, 1);
             assert_eq!(stats.total_processing_time_ms, 1500);
             assert_eq!(stats.average_processing_time_ms, 1500.0);
+            assert_eq!(stats.average_processing_time_one_minute_ms, 1500.0);
+            assert_eq!(
+                stats.average_processing_time_one_minute_display,
+                "1.50 s/min"
+            );
             assert_eq!(stats.success_rate(), 100.0);
         }
 
@@ -337,8 +372,8 @@ mod handlers_tests {
 
         #[tokio::test]
         async fn test_add_cors_headers() {
-            use WhisperBackendAPI::handlers::add_cors_headers;
             use axum::response::IntoResponse;
+            use WhisperBackendAPI::handlers::add_cors_headers;
 
             let response = add_cors_headers().await;
             let response = response.into_response();
@@ -382,7 +417,9 @@ mod handlers_tests {
             assert_eq!(model_info.name, "Whisper Base");
             assert_eq!(model_info.size_mb, 142);
             assert!(!model_info.is_available);
-            assert!(model_info.language_support.contains(&"multilingual".to_string()));
+            assert!(model_info
+                .language_support
+                .contains(&"multilingual".to_string()));
         }
     }
 
@@ -405,11 +442,26 @@ mod handlers_tests {
             let error_codes_and_statuses = vec![
                 (ApiErrorCode::InvalidInput, StatusCode::BAD_REQUEST),
                 (ApiErrorCode::FileTooLarge, StatusCode::PAYLOAD_TOO_LARGE),
-                (ApiErrorCode::UnsupportedFormat, StatusCode::UNSUPPORTED_MEDIA_TYPE),
-                (ApiErrorCode::ProcessingFailed, StatusCode::INTERNAL_SERVER_ERROR),
-                (ApiErrorCode::ModelNotLoaded, StatusCode::SERVICE_UNAVAILABLE),
-                (ApiErrorCode::ServerOverloaded, StatusCode::TOO_MANY_REQUESTS),
-                (ApiErrorCode::InternalError, StatusCode::INTERNAL_SERVER_ERROR),
+                (
+                    ApiErrorCode::UnsupportedFormat,
+                    StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                ),
+                (
+                    ApiErrorCode::ProcessingFailed,
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                ),
+                (
+                    ApiErrorCode::ModelNotLoaded,
+                    StatusCode::SERVICE_UNAVAILABLE,
+                ),
+                (
+                    ApiErrorCode::ServerOverloaded,
+                    StatusCode::TOO_MANY_REQUESTS,
+                ),
+                (
+                    ApiErrorCode::InternalError,
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                ),
             ];
 
             for (error_code, expected_status) in error_codes_and_statuses {

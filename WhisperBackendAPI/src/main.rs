@@ -12,13 +12,13 @@ mod models;
 mod whisper;
 
 use crate::config::Config;
-use crate::handlers::{AppState, add_cors_headers};
+use crate::handlers::{add_cors_headers, AppState};
 use crate::whisper::WhisperEngine;
+use axum::extract::DefaultBodyLimit;
 use axum::{
-    routing::{get, post, options},
+    routing::{get, options, post},
     Router,
 };
-use axum::extract::DefaultBodyLimit;
 use std::net::SocketAddr;
 use tower::ServiceBuilder;
 use tower_http::cors::{Any, CorsLayer};
@@ -80,15 +80,16 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         // 文字起こしエンドポイント
         .route("/transcribe", post(handlers::transcribe_basic))
-        .route("/transcribe-with-timestamps", post(handlers::transcribe_with_timestamps))
-
+        .route(
+            "/transcribe-with-timestamps",
+            post(handlers::transcribe_with_timestamps),
+        )
         // 情報取得エンドポイント
         .route("/models", get(handlers::get_models))
         .route("/languages", get(handlers::get_languages))
         .route("/health", get(handlers::health_check))
         .route("/stats", get(handlers::get_stats))
         .route("/gpu-status", get(handlers::get_gpu_status))
-
         // CORS プリフライトリクエスト対応
         .route("/transcribe", options(add_cors_headers))
         .route("/transcribe-with-timestamps", options(add_cors_headers))
@@ -97,23 +98,23 @@ async fn main() -> anyhow::Result<()> {
         .route("/health", options(add_cors_headers))
         .route("/stats", options(add_cors_headers))
         .route("/gpu-status", options(add_cors_headers))
-
         // ミドルウェアの追加
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
                 .layer(cors)
                 // 本文サイズの上限（multipart 含む）を設定
-                .layer(DefaultBodyLimit::max(config.server.max_request_size))
+                .layer(DefaultBodyLimit::max(config.server.max_request_size)),
         )
-
         // アプリケーション状態の共有
         // - ハンドラから Config や WhisperEngine、統計にアクセス可能
         .with_state(app_state);
 
     // サーバーアドレスの解析
     // - `host:port` 形式の文字列を `SocketAddr` に変換
-    let addr: SocketAddr = config.server_address().parse()
+    let addr: SocketAddr = config
+        .server_address()
+        .parse()
         .map_err(|e| anyhow::anyhow!("無効なサーバーアドレス: {}", e))?;
 
     println!("サーバーを起動します: http://{}", addr);
@@ -128,7 +129,10 @@ async fn main() -> anyhow::Result<()> {
     println!();
     println!("使用例:");
     println!("  curl -F \"file=@audio.wav\" http://{}/transcribe", addr);
-    println!("  curl -F \"file=@audio.wav\" -F \"language=ja\" http://{}/transcribe-with-timestamps", addr);
+    println!(
+        "  curl -F \"file=@audio.wav\" -F \"language=ja\" http://{}/transcribe-with-timestamps",
+        addr
+    );
 
     // サーバーの起動
     // - 明示的に TcpListener を生成し、`axum::serve` に渡す

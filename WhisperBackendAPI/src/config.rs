@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 use std::fs;
+use std::path::Path;
 
 // =============================================================================
 // 設定モデル
@@ -152,7 +152,10 @@ impl Config {
             match Self::load_from_file(&path) {
                 Ok(config) => Ok(config),
                 Err(e) => {
-                    eprintln!("設定ファイルの読み込みに失敗しました: {}. デフォルト設定を使用します。", e);
+                    eprintln!(
+                        "設定ファイルの読み込みに失敗しました: {}. デフォルト設定を使用します。",
+                        e
+                    );
                     let config = Self::default();
                     config.save_to_file(&path)?;
                     Ok(config)
@@ -161,7 +164,10 @@ impl Config {
         } else {
             let config = Self::default();
             config.save_to_file(&path)?;
-            println!("デフォルト設定ファイルを作成しました: {}", path.as_ref().display());
+            println!(
+                "デフォルト設定ファイルを作成しました: {}",
+                path.as_ref().display()
+            );
             Ok(config)
         }
     }
@@ -185,7 +191,11 @@ impl Config {
 
         // ディレクトリの存在確認と作成
         // - models/temp/uploads が無い場合は作成
-        for dir in &[&self.paths.models_dir, &self.paths.temp_dir, &self.paths.upload_dir] {
+        for dir in &[
+            &self.paths.models_dir,
+            &self.paths.temp_dir,
+            &self.paths.upload_dir,
+        ] {
             if !Path::new(dir).exists() {
                 fs::create_dir_all(dir)
                     .map_err(|e| anyhow::anyhow!("ディレクトリの作成に失敗: {} - {}", dir, e))?;
@@ -194,16 +204,22 @@ impl Config {
 
         // パフォーマンス設定の検証
         if self.performance.whisper_threads == 0 {
-            return Err(anyhow::anyhow!("Whisperスレッド数は1以上である必要があります"));
+            return Err(anyhow::anyhow!(
+                "Whisperスレッド数は1以上である必要があります"
+            ));
         }
 
         if self.performance.max_concurrent_requests == 0 {
-            return Err(anyhow::anyhow!("最大同時リクエスト数は1以上である必要があります"));
+            return Err(anyhow::anyhow!(
+                "最大同時リクエスト数は1以上である必要があります"
+            ));
         }
 
         // ファイルサイズ制限の検証
         if self.limits.max_file_size_mb == 0 {
-            return Err(anyhow::anyhow!("最大ファイルサイズは1MB以上である必要があります"));
+            return Err(anyhow::anyhow!(
+                "最大ファイルサイズは1MB以上である必要があります"
+            ));
         }
 
         Ok(())

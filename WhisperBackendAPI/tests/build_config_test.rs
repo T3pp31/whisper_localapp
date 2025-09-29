@@ -4,8 +4,8 @@ use toml::Value;
 #[test]
 fn nvcc_prepend_flags_should_be_configured() {
     let config_path = "build_config.toml";
-    let content = fs::read_to_string(config_path)
-        .expect("build_config.toml の読み込みに失敗しました");
+    let content =
+        fs::read_to_string(config_path).expect("build_config.toml の読み込みに失敗しました");
 
     let value: Value = toml::from_str(&content)
         .expect("build_config.toml が正しい TOML フォーマットではありません");

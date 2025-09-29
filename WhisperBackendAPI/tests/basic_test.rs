@@ -1,8 +1,8 @@
 // 基本的なモジュール機能のテスト（whisper-rsに依存しない）
 
-use WhisperBackendAPI::{config::Config, models::*};
 use std::fs;
 use tempfile::TempDir;
+use WhisperBackendAPI::{config::Config, models::*};
 
 #[cfg(test)]
 mod basic_tests {
@@ -39,7 +39,10 @@ mod basic_tests {
         // 読み込み
         let loaded_config = Config::load_from_file(&config_path).unwrap();
         assert_eq!(loaded_config.server.port, original_config.server.port);
-        assert_eq!(loaded_config.whisper.enable_gpu, original_config.whisper.enable_gpu);
+        assert_eq!(
+            loaded_config.whisper.enable_gpu,
+            original_config.whisper.enable_gpu
+        );
     }
 
     /// TranscriptionSegmentのテスト
@@ -47,8 +50,8 @@ mod basic_tests {
     fn test_transcription_segment() {
         let segment = TranscriptionSegment::new(
             "Hello world".to_string(),
-            1000,  // 1秒
-            3000,  // 3秒
+            1000, // 1秒
+            3000, // 3秒
         );
 
         assert_eq!(segment.text, "Hello world");
@@ -86,6 +89,11 @@ mod basic_tests {
         assert_eq!(stats.total_requests, 1);
         assert_eq!(stats.successful_transcriptions, 1);
         assert_eq!(stats.average_processing_time_ms, 1500.0);
+        assert_eq!(stats.average_processing_time_one_minute_ms, 1500.0);
+        assert_eq!(
+            stats.average_processing_time_one_minute_display,
+            "1.50 s/min"
+        );
         assert_eq!(stats.success_rate(), 100.0);
 
         // 失敗記録
@@ -122,7 +130,10 @@ mod basic_tests {
     fn test_api_error_code() {
         assert_eq!(ApiErrorCode::InvalidInput.as_str(), "INVALID_INPUT");
         assert_eq!(ApiErrorCode::FileTooLarge.as_str(), "FILE_TOO_LARGE");
-        assert_eq!(ApiErrorCode::UnsupportedFormat.as_str(), "UNSUPPORTED_FORMAT");
+        assert_eq!(
+            ApiErrorCode::UnsupportedFormat.as_str(),
+            "UNSUPPORTED_FORMAT"
+        );
         assert_eq!(ApiErrorCode::ProcessingFailed.as_str(), "PROCESSING_FAILED");
         assert_eq!(ApiErrorCode::ModelNotLoaded.as_str(), "MODEL_NOT_LOADED");
         assert_eq!(ApiErrorCode::ServerOverloaded.as_str(), "SERVER_OVERLOADED");
@@ -158,7 +169,22 @@ mod basic_tests {
         let json = serde_json::to_string(&stats).unwrap();
         let deserialized: ServerStats = serde_json::from_str(&json).unwrap();
         assert_eq!(stats.total_requests, deserialized.total_requests);
-        assert_eq!(stats.successful_transcriptions, deserialized.successful_transcriptions);
+        assert_eq!(
+            stats.successful_transcriptions,
+            deserialized.successful_transcriptions
+        );
+        assert_eq!(
+            stats.average_processing_time_ms,
+            deserialized.average_processing_time_ms
+        );
+        assert_eq!(
+            stats.average_processing_time_one_minute_ms,
+            deserialized.average_processing_time_one_minute_ms
+        );
+        assert_eq!(
+            stats.average_processing_time_one_minute_display,
+            deserialized.average_processing_time_one_minute_display
+        );
 
         // ModelCatalog
         let catalog = ModelCatalog::default();
@@ -235,8 +261,16 @@ mod basic_tests {
             let srt = segment.to_srt_format(0);
             let vtt = segment.to_vtt_format();
 
-            assert!(srt.contains(expected_srt), "SRT format test failed for {}ms", ms);
-            assert!(vtt.contains(expected_vtt), "VTT format test failed for {}ms", ms);
+            assert!(
+                srt.contains(expected_srt),
+                "SRT format test failed for {}ms",
+                ms
+            );
+            assert!(
+                vtt.contains(expected_vtt),
+                "VTT format test failed for {}ms",
+                ms
+            );
         }
     }
 }

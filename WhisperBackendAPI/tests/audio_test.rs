@@ -21,11 +21,11 @@ mod audio_tests {
         wav_data.extend_from_slice(b"WAVE");
         wav_data.extend_from_slice(b"fmt ");
         wav_data.extend_from_slice(&16u32.to_le_bytes()); // fmt chunk size
-        wav_data.extend_from_slice(&1u16.to_le_bytes());  // PCM format
-        wav_data.extend_from_slice(&1u16.to_le_bytes());  // mono
+        wav_data.extend_from_slice(&1u16.to_le_bytes()); // PCM format
+        wav_data.extend_from_slice(&1u16.to_le_bytes()); // mono
         wav_data.extend_from_slice(&sample_rate.to_le_bytes());
         wav_data.extend_from_slice(&(sample_rate * 2).to_le_bytes()); // byte rate
-        wav_data.extend_from_slice(&2u16.to_le_bytes());  // block align
+        wav_data.extend_from_slice(&2u16.to_le_bytes()); // block align
         wav_data.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
         wav_data.extend_from_slice(b"data");
         wav_data.extend_from_slice(&(data_size as u32).to_le_bytes());
@@ -211,7 +211,10 @@ mod audio_tests {
         // 制限を超えるファイルサイズ
         let result = processor.validate_file_size(11 * 1024 * 1024);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("ファイルサイズが制限を超えています"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("ファイルサイズが制限を超えています"));
     }
 
     /// validate_audio_durationのテスト
@@ -252,7 +255,10 @@ mod audio_tests {
         };
         let result = processor.validate_audio_duration(&metadata);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("音声ファイルが長すぎます"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("音声ファイルが長すぎます"));
     }
 
     /// create_temp_file_from_bytesのテスト
@@ -265,7 +271,9 @@ mod audio_tests {
         let test_data = b"test audio data";
         let filename = "test.wav";
 
-        let temp_file = processor.create_temp_file_from_bytes(test_data, filename).unwrap();
+        let temp_file = processor
+            .create_temp_file_from_bytes(test_data, filename)
+            .unwrap();
 
         // ファイルが作成されることを確認
         assert!(temp_file.path().exists());
@@ -310,7 +318,10 @@ mod audio_tests {
         let result = processor.probe_metadata(&nonexistent_file);
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("音声ファイルが見つかりません"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("音声ファイルが見つかりません"));
     }
 
     /// load_audio_file - 基本テスト
@@ -349,7 +360,10 @@ mod audio_tests {
         let result = processor.load_audio_file(&nonexistent_file);
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("音声ファイルが見つかりません"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("音声ファイルが見つかりません"));
     }
 
     /// process_audio_from_bytes - 統合テスト
@@ -363,7 +377,9 @@ mod audio_tests {
         let wav_data = create_test_wav_data(44100, 1.0);
         let filename = "test.wav";
 
-        let processed = processor.process_audio_from_bytes(&wav_data, filename).unwrap();
+        let processed = processor
+            .process_audio_from_bytes(&wav_data, filename)
+            .unwrap();
 
         assert!(!processed.samples.is_empty());
         assert_eq!(processed.sample_rate, 16000); // 設定されたターゲットSR
@@ -410,8 +426,9 @@ mod audio_tests {
 
         assert_eq!(processed.sample_rate, 8000); // リサンプリング後のSR
         assert_eq!(processed.original_metadata.sample_rate, 44100); // 元のSR
-        // リサンプリング後のサンプル数が適切であることを確認
-        assert!(processed.samples.len() > 7500 && processed.samples.len() < 8500); // 約8000サンプル
+                                                                    // リサンプリング後のサンプル数が適切であることを確認
+        assert!(processed.samples.len() > 7500 && processed.samples.len() < 8500);
+        // 約8000サンプル
     }
 
     /// 空のファイルに対するエラーハンドリング

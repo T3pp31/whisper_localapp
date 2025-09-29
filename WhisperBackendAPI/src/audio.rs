@@ -4,6 +4,7 @@ use rubato::{
     Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
 use std::fs::File;
+use std::io::Write;
 use std::path::Path;
 use symphonia::core::audio::{AudioBufferRef, Signal};
 use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
@@ -12,7 +13,6 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use tempfile::{NamedTempFile, TempDir};
-use std::io::Write;
 
 /// 入力音声ファイルから取得する基本メタデータ
 #[derive(Debug, Clone)]
@@ -158,7 +158,11 @@ impl AudioProcessor {
 
     /// バイト配列から一時ファイルを作成し、音声データを処理
     /// - ブラウザからのアップロード（メモリ上のバイト列）に対応する経路
-    pub fn process_audio_from_bytes(&mut self, audio_bytes: &[u8], filename: &str) -> Result<ProcessedAudio> {
+    pub fn process_audio_from_bytes(
+        &mut self,
+        audio_bytes: &[u8],
+        filename: &str,
+    ) -> Result<ProcessedAudio> {
         // 一時ファイルを作成
         let temp_file = self.create_temp_file_from_bytes(audio_bytes, filename)?;
         let temp_path = temp_file.path();
@@ -178,7 +182,8 @@ impl AudioProcessor {
         let samples = self.load_audio_file(path)?;
 
         // 期間を計算（ターゲット SR でのサンプル数から ms を求める）
-        let duration_ms = (samples.len() as f64 / self.config.audio.sample_rate as f64 * 1000.0) as u64;
+        let duration_ms =
+            (samples.len() as f64 / self.config.audio.sample_rate as f64 * 1000.0) as u64;
 
         Ok(ProcessedAudio {
             samples,
@@ -270,7 +275,8 @@ impl AudioProcessor {
             .codec_params()
             .sample_rate
             .or(codec_params.sample_rate)
-            .ok_or_else(|| anyhow::anyhow!("サンプリングレートが取得できません"))? as f64;
+            .ok_or_else(|| anyhow::anyhow!("サンプリングレートが取得できません"))?
+            as f64;
 
         let target_sample_rate = self.config.audio.sample_rate as f64;
         let resampled = if (original_sample_rate - target_sample_rate).abs() > 1.0 {
@@ -284,16 +290,18 @@ impl AudioProcessor {
 
     /// バイト配列から一時ファイルを作成
     /// - 拡張子は元ファイル名から推測し、デコーダーのヒントに寄与
-    pub fn create_temp_file_from_bytes(&self, bytes: &[u8], filename: &str) -> Result<NamedTempFile> {
+    pub fn create_temp_file_from_bytes(
+        &self,
+        bytes: &[u8],
+        filename: &str,
+    ) -> Result<NamedTempFile> {
         let extension = Path::new(filename)
             .extension()
             .and_then(|ext| ext.to_str())
             .unwrap_or("bin");
 
-        let mut temp_file = NamedTempFile::with_suffix_in(
-            &format!(".{}", extension),
-            &self.temp_dir
-        )?;
+        let mut temp_file =
+            NamedTempFile::with_suffix_in(&format!(".{}", extension), &self.temp_dir)?;
 
         std::io::Write::write_all(&mut temp_file, bytes)?;
         temp_file.flush()?;
@@ -313,8 +321,16 @@ impl AudioProcessor {
         // mp4 はコンテナであり、実体は m4a(AAC) 等の音声を含むことが多い。
         // 既存の設定に mp4 が無い場合でも、m4a が許可されていれば mp4 も許可する。
         if extension == "mp4" {
-            return self.config.audio.supported_formats.contains(&"mp4".to_string())
-                || self.config.audio.supported_formats.contains(&"m4a".to_string());
+            return self
+                .config
+                .audio
+                .supported_formats
+                .contains(&"mp4".to_string())
+                || self
+                    .config
+                    .audio
+                    .supported_formats
+                    .contains(&"m4a".to_string());
         }
 
         self.config.audio.supported_formats.contains(&extension)

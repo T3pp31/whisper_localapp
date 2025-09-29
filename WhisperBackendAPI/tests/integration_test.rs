@@ -9,7 +9,7 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 use WhisperBackendAPI::{
     config::Config,
-    handlers::{AppState, add_cors_headers},
+    handlers::{add_cors_headers, AppState},
     models::*,
 };
 
@@ -92,7 +92,7 @@ mod integration_tests {
     }
 
     async fn languages_handler() -> axum::Json<Vec<LanguageInfo>> {
-        use WhisperBackendAPI::whisper::{get_supported_languages, get_language_name};
+        use WhisperBackendAPI::whisper::{get_language_name, get_supported_languages};
 
         let languages = get_supported_languages()
             .iter()
@@ -164,7 +164,9 @@ mod integration_tests {
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let health_response: HealthResponse = serde_json::from_slice(&body).unwrap();
 
         assert_eq!(health_response.status, "healthy");
@@ -199,13 +201,20 @@ mod integration_tests {
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let stats_response: ServerStats = serde_json::from_slice(&body).unwrap();
 
         assert_eq!(stats_response.total_requests, 1);
         assert_eq!(stats_response.successful_transcriptions, 1);
         assert_eq!(stats_response.failed_transcriptions, 0);
         assert_eq!(stats_response.average_processing_time_ms, 1500.0);
+        assert_eq!(stats_response.average_processing_time_one_minute_ms, 1500.0);
+        assert_eq!(
+            stats_response.average_processing_time_one_minute_display,
+            "1.50 s/min"
+        );
         assert_eq!(stats_response.success_rate(), 100.0);
         assert!(stats_response.uptime_seconds >= 0);
     }
@@ -233,21 +242,27 @@ mod integration_tests {
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let models_response: ModelsResponse = serde_json::from_slice(&body).unwrap();
 
         assert!(!models_response.models.is_empty());
         assert!(!models_response.current_model.is_empty());
 
         // tinyモデルが利用可能として表示されることを確認
-        let tiny_model = models_response.models.iter()
+        let tiny_model = models_response
+            .models
+            .iter()
             .find(|m| m.name.contains("Tiny"))
             .unwrap();
         assert!(tiny_model.is_available);
         assert_eq!(tiny_model.size_mb, 39);
 
         // 存在しないモデルは利用不可として表示される
-        let base_model = models_response.models.iter()
+        let base_model = models_response
+            .models
+            .iter()
             .find(|m| m.name.contains("Base"))
             .unwrap();
         assert!(!base_model.is_available);
@@ -270,23 +285,22 @@ mod integration_tests {
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let languages_response: Vec<LanguageInfo> = serde_json::from_slice(&body).unwrap();
 
         assert!(!languages_response.is_empty());
 
         // 主要言語が含まれていることを確認
-        let en_lang = languages_response.iter()
-            .find(|l| l.code == "en")
-            .unwrap();
+        let en_lang = languages_response.iter().find(|l| l.code == "en").unwrap();
         assert_eq!(en_lang.name, "English");
 
-        let ja_lang = languages_response.iter()
-            .find(|l| l.code == "ja")
-            .unwrap();
+        let ja_lang = languages_response.iter().find(|l| l.code == "ja").unwrap();
         assert_eq!(ja_lang.name, "Japanese");
 
-        let auto_lang = languages_response.iter()
+        let auto_lang = languages_response
+            .iter()
             .find(|l| l.code == "auto")
             .unwrap();
         assert_eq!(auto_lang.name, "Auto Detect");
@@ -309,7 +323,9 @@ mod integration_tests {
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let gpu_status: Value = serde_json::from_slice(&body).unwrap();
 
         assert_eq!(gpu_status["gpu_enabled_in_config"], false); // テスト環境では無効
@@ -397,7 +413,9 @@ mod integration_tests {
             );
 
             // レスポンスボディが有効なJSONであることを確認
-            let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
             let json_value: Value = serde_json::from_slice(&body)
                 .expect(&format!("Endpoint {} should return valid JSON", endpoint));
 
@@ -434,7 +452,12 @@ mod integration_tests {
         // 全ての同時リクエストが成功することを確認
         for handle in handles {
             let (request_id, status) = handle.await.unwrap();
-            assert_eq!(status, StatusCode::OK, "Request {} should succeed", request_id);
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "Request {} should succeed",
+                request_id
+            );
         }
     }
 
@@ -457,7 +480,9 @@ mod integration_tests {
 
         // Axumは自動的にContent-Type: application/jsonを設定する
         // ここではレスポンスが適切なJSONであることを確認
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json_result = serde_json::from_slice::<Value>(&body);
         assert!(json_result.is_ok(), "Response should be valid JSON");
     }
@@ -465,8 +490,8 @@ mod integration_tests {
     /// エラーレスポンスのテスト（モックエラー）
     #[tokio::test]
     async fn test_error_response_format() {
-        use WhisperBackendAPI::{handlers::ApiError, models::ApiErrorCode};
         use axum::response::IntoResponse;
+        use WhisperBackendAPI::{handlers::ApiError, models::ApiErrorCode};
 
         // APIエラーのレスポンス形式をテスト
         let error = ApiError::new(ApiErrorCode::InvalidInput, "Test error message")
@@ -478,12 +503,17 @@ mod integration_tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
         // レスポンスボディがErrorResponseの形式であることを確認
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let error_response: ErrorResponse = serde_json::from_slice(&body).unwrap();
 
         assert_eq!(error_response.error, "Test error message");
         assert_eq!(error_response.code, "INVALID_INPUT");
-        assert_eq!(error_response.details, Some("Additional error details".to_string()));
+        assert_eq!(
+            error_response.details,
+            Some("Additional error details".to_string())
+        );
     }
 
     /// アプリケーション状態の一貫性テスト
@@ -513,6 +543,11 @@ mod integration_tests {
             assert_eq!(stats.total_requests, 1);
             assert_eq!(stats.successful_transcriptions, 1);
             assert_eq!(stats.average_processing_time_ms, 2000.0);
+            assert_eq!(stats.average_processing_time_one_minute_ms, 2000.0);
+            assert_eq!(
+                stats.average_processing_time_one_minute_display,
+                "2.00 s/min"
+            );
         }
 
         // Whisperエンジンの初期状態確認

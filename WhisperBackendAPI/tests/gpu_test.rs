@@ -146,7 +146,10 @@ mod gpu_tests {
         }
 
         // nvidia-smiの確認
-        match std::process::Command::new("nvidia-smi").arg("--version").output() {
+        match std::process::Command::new("nvidia-smi")
+            .arg("--version")
+            .output()
+        {
             Ok(output) => {
                 if output.status.success() {
                     println!("✓ nvidia-smi is available");
@@ -225,5 +228,5 @@ mod bench_tests {
         }
     }
 
-    use super::gpu_tests::{get_test_config, generate_test_audio};
+    use super::gpu_tests::{generate_test_audio, get_test_config};
 }
