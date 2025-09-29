@@ -1,6 +1,6 @@
-use WhisperBackendAPI::{whisper::*, config::Config};
-use tempfile::TempDir;
 use std::fs;
+use tempfile::TempDir;
+use WhisperBackendAPI::{config::Config, whisper::*};
 
 #[cfg(test)]
 mod whisper_tests {
@@ -51,7 +51,10 @@ mod whisper_tests {
 
         let result = WhisperEngine::new(&config.whisper.model_path, &config);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Whisperモデルファイルが見つかりません"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Whisperモデルファイルが見つかりません"));
     }
 
     /// WhisperEngineの初期化テスト（正常系）
@@ -361,7 +364,10 @@ mod whisper_tests {
             let duration = start.elapsed();
 
             // 正規化が完了していることを確認
-            let max_abs = large_samples.iter().map(|&x| x.abs()).fold(0.0f32, f32::max);
+            let max_abs = large_samples
+                .iter()
+                .map(|&x| x.abs())
+                .fold(0.0f32, f32::max);
             assert!(max_abs <= 0.95);
 
             // 処理時間が合理的であることを確認（1秒以内）
@@ -394,9 +400,7 @@ mod whisper_tests {
         fn test_transcription_result_clone() {
             use WhisperBackendAPI::models::TranscriptionSegment;
 
-            let segments = vec![
-                TranscriptionSegment::new("Test".to_string(), 0, 1000),
-            ];
+            let segments = vec![TranscriptionSegment::new("Test".to_string(), 0, 1000)];
 
             let original = TranscriptionResult {
                 text: "Test".to_string(),

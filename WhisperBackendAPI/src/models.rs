@@ -197,7 +197,9 @@ impl Default for ModelCatalog {
             ModelDefinition {
                 name: "Whisper Tiny".to_string(),
                 file_name: "ggml-tiny.bin".to_string(),
-                download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin".to_string(),
+                download_url:
+                    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin"
+                        .to_string(),
                 size_mb: 39,
                 description: "最小モデル（39MB）- 高速だが精度は低い".to_string(),
                 language_support: vec!["multilingual".to_string()],
@@ -210,7 +212,9 @@ impl Default for ModelCatalog {
             ModelDefinition {
                 name: "Whisper Base".to_string(),
                 file_name: "ggml-base.bin".to_string(),
-                download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin".to_string(),
+                download_url:
+                    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin"
+                        .to_string(),
                 size_mb: 142,
                 description: "基本モデル（142MB）- バランスの取れた速度と精度".to_string(),
                 language_support: vec!["multilingual".to_string()],
@@ -223,7 +227,9 @@ impl Default for ModelCatalog {
             ModelDefinition {
                 name: "Whisper Small".to_string(),
                 file_name: "ggml-small.bin".to_string(),
-                download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin".to_string(),
+                download_url:
+                    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
+                        .to_string(),
                 size_mb: 244,
                 description: "小型モデル（244MB）- 良好な精度と実用的な速度".to_string(),
                 language_support: vec!["multilingual".to_string()],
@@ -236,7 +242,9 @@ impl Default for ModelCatalog {
             ModelDefinition {
                 name: "Whisper Medium".to_string(),
                 file_name: "ggml-medium.bin".to_string(),
-                download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin".to_string(),
+                download_url:
+                    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin"
+                        .to_string(),
                 size_mb: 769,
                 description: "中型モデル（769MB）- 高精度だが処理時間が長い".to_string(),
                 language_support: vec!["multilingual".to_string()],
@@ -272,7 +280,10 @@ pub struct ServerStats {
     pub successful_transcriptions: u64,
     pub failed_transcriptions: u64,
     pub total_processing_time_ms: u64,
+    pub total_audio_duration_ms: u64,
     pub average_processing_time_ms: f64,
+    pub average_processing_time_one_minute_ms: f64,
+    pub average_processing_time_one_minute_display: String,
     pub active_requests: usize,
     pub uptime_seconds: u64,
 }
@@ -284,7 +295,10 @@ impl Default for ServerStats {
             successful_transcriptions: 0,
             failed_transcriptions: 0,
             total_processing_time_ms: 0,
+            total_audio_duration_ms: 0,
             average_processing_time_ms: 0.0,
+            average_processing_time_one_minute_ms: 0.0,
+            average_processing_time_one_minute_display: "0.00 s/min".to_string(),
             active_requests: 0,
             uptime_seconds: 0,
         }
@@ -297,14 +311,30 @@ impl ServerStats {
         self.active_requests += 1;
     }
 
-    pub fn record_success(&mut self, processing_time_ms: u64) {
+    pub fn record_success(&mut self, processing_time_ms: u64, audio_duration_ms: Option<u64>) {
         self.successful_transcriptions += 1;
         self.active_requests = self.active_requests.saturating_sub(1);
-        self.total_processing_time_ms += processing_time_ms;
+        self.total_processing_time_ms = self
+            .total_processing_time_ms
+            .saturating_add(processing_time_ms);
 
-        if self.successful_transcriptions > 0 {
-            self.average_processing_time_ms =
-                self.total_processing_time_ms as f64 / self.successful_transcriptions as f64;
+        if let Some(duration_ms) = audio_duration_ms {
+            self.total_audio_duration_ms = self.total_audio_duration_ms.saturating_add(duration_ms);
+        }
+
+        if self.total_audio_duration_ms > 0 {
+            let average_ms = (self.total_processing_time_ms as f64
+                / self.total_audio_duration_ms as f64)
+                * 60_000.0;
+            self.average_processing_time_ms = average_ms;
+            self.average_processing_time_one_minute_ms = average_ms;
+            self.average_processing_time_one_minute_display =
+                format_average_processing_time_per_minute(average_ms);
+        } else {
+            self.average_processing_time_ms = 0.0;
+            self.average_processing_time_one_minute_ms = 0.0;
+            self.average_processing_time_one_minute_display =
+                format_average_processing_time_per_minute(0.0);
         }
     }
 
@@ -319,6 +349,14 @@ impl ServerStats {
         } else {
             self.successful_transcriptions as f64 / self.total_requests as f64 * 100.0
         }
+    }
+}
+
+fn format_average_processing_time_per_minute(average_ms: f64) -> String {
+    if average_ms <= 0.0 {
+        "0.00 s/min".to_string()
+    } else {
+        format!("{:.2} s/min", average_ms / 1000.0)
     }
 }
 

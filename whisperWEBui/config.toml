@@ -15,3 +15,5 @@ default_language = "ja"
 timeline_update_interval_ms = 200
 upload_prompt_text = "音声ファイルをドラッグ&ドロップするか、クリックして選択してください"
 upload_success_text = "{filename} を選択しました"
+stats_average_processing_time_label = "平均処理時間 (音声1分あたりの文字起こし所要時間)"
+stats_average_processing_time_unit = "秒 / 音声1分"

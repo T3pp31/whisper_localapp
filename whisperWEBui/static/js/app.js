@@ -29,10 +29,17 @@ class WhisperWebUI {
         this.appConfig = document.getElementById('app-config');
         const configDefaultLanguage = this.appConfig?.dataset.defaultLanguage?.trim();
         const configTimelineUpdate = Number(this.appConfig?.dataset.timelineUpdateMs);
+        const configStatsAverageLabel = this.appConfig?.dataset.statsAverageProcessingTimeLabel?.trim();
+        const configStatsAverageUnit = this.appConfig?.dataset.statsAverageProcessingTimeUnit;
         this.defaultLanguage = configDefaultLanguage || '';
         this.timelineUpdateInterval = Number.isFinite(configTimelineUpdate) && configTimelineUpdate > 0
             ? configTimelineUpdate
             : 200;
+        this.statsAverageProcessingTimeLabel = configStatsAverageLabel || '平均処理時間 (音声1分あたりの文字起こし所要時間)';
+        this.statsAverageProcessingTimeUnit =
+            typeof configStatsAverageUnit === 'string' && configStatsAverageUnit.trim().length > 0
+                ? configStatsAverageUnit.trim()
+                : '秒 / 音声1分';
 
         this.currentFile = null;
         this.currentResultData = null;
@@ -274,7 +281,11 @@ class WhisperWebUI {
                 ];
 
                 if (typeof stats.average_processing_time === 'number' && stats.average_processing_time > 0) {
-                    parts.push(`<div>平均処理時間: ${stats.average_processing_time.toFixed(2)}秒</div>`);
+                    const label = this.escapeHtml(this.statsAverageProcessingTimeLabel || '');
+                    const unit = this.escapeHtml(this.statsAverageProcessingTimeUnit || '');
+                    const formattedValue = `${stats.average_processing_time.toFixed(2)}${unit ? ` ${unit}` : ''}`;
+                    const labelPrefix = label ? `${label}: ` : '';
+                    parts.push(`<div>${labelPrefix}${formattedValue}</div>`);
                 }
 
                 if (typeof stats.active_requests === 'number') {
@@ -292,6 +303,19 @@ class WhisperWebUI {
             container.textContent = '統計情報の取得に失敗しました';
             console.error('Failed to load stats:', error);
         }
+    }
+
+    escapeHtml(text) {
+        if (typeof text !== 'string') {
+            return '';
+        }
+
+        return text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     handleDragOver(event) {

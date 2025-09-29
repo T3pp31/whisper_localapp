@@ -1,10 +1,10 @@
 // テスト用のモック実装
 // whisper-rsの依存関係なしでテストを実行するため
 
-use WhisperBackendAPI::{config::Config, models::*};
 use serde_json::Value;
 use std::fs;
 use tempfile::TempDir;
+use WhisperBackendAPI::{config::Config, models::*};
 
 #[cfg(test)]
 mod mock_tests {
@@ -27,7 +27,10 @@ mod mock_tests {
 
         let loaded_config = Config::load_from_file(&config_path).unwrap();
         assert_eq!(loaded_config.server.port, default_config.server.port);
-        assert_eq!(loaded_config.whisper.enable_gpu, default_config.whisper.enable_gpu);
+        assert_eq!(
+            loaded_config.whisper.enable_gpu,
+            default_config.whisper.enable_gpu
+        );
     }
 
     /// モデル管理テスト
@@ -59,13 +62,24 @@ mod mock_tests {
         assert_eq!(stats.successful_transcriptions, 0);
         assert_eq!(stats.failed_transcriptions, 0);
         assert_eq!(stats.success_rate(), 0.0);
+        assert_eq!(stats.average_processing_time_ms, 0.0);
+        assert_eq!(stats.average_processing_time_one_minute_ms, 0.0);
+        assert_eq!(
+            stats.average_processing_time_one_minute_display,
+            "0.00 s/min"
+        );
 
         // リクエスト記録
         stats.record_request();
-        stats.record_success(1500);
+        stats.record_success(1500, Some(60_000));
         assert_eq!(stats.total_requests, 1);
         assert_eq!(stats.successful_transcriptions, 1);
         assert_eq!(stats.average_processing_time_ms, 1500.0);
+        assert_eq!(stats.average_processing_time_one_minute_ms, 1500.0);
+        assert_eq!(
+            stats.average_processing_time_one_minute_display,
+            "1.50 s/min"
+        );
         assert_eq!(stats.success_rate(), 100.0);
 
         // 失敗記録
@@ -81,8 +95,8 @@ mod mock_tests {
     fn test_transcription_segment() {
         let segment = TranscriptionSegment::new(
             "Hello world".to_string(),
-            1000,  // 1秒
-            3000,  // 3秒
+            1000, // 1秒
+            3000, // 3秒
         );
 
         assert_eq!(segment.text, "Hello world");
@@ -92,14 +106,14 @@ mod mock_tests {
 
         // SRT形式出力テスト
         let srt = segment.to_srt_format(0);
-        assert!(srt.contains("1"));  // SRT番号
-        assert!(srt.contains("00:00:01,000 --> 00:00:03,000"));  // 時間
-        assert!(srt.contains("Hello world"));  // テキスト
+        assert!(srt.contains("1")); // SRT番号
+        assert!(srt.contains("00:00:01,000 --> 00:00:03,000")); // 時間
+        assert!(srt.contains("Hello world")); // テキスト
 
         // VTT形式出力テスト
         let vtt = segment.to_vtt_format();
-        assert!(vtt.contains("00:00:01.000 --> 00:00:03.000"));  // VTT時間形式
-        assert!(vtt.contains("Hello world"));  // テキスト
+        assert!(vtt.contains("00:00:01.000 --> 00:00:03.000")); // VTT時間形式
+        assert!(vtt.contains("Hello world")); // テキスト
     }
 
     /// 音声ユーティリティ関数テスト
@@ -210,16 +224,14 @@ mod mock_tests {
     #[test]
     fn test_json_serialization() {
         let models_response = ModelsResponse {
-            models: vec![
-                ModelInfo {
-                    name: "Test Model".to_string(),
-                    file_path: "/path/to/model.bin".to_string(),
-                    size_mb: 100,
-                    description: "Test model description".to_string(),
-                    language_support: vec!["en".to_string(), "ja".to_string()],
-                    is_available: true,
-                }
-            ],
+            models: vec![ModelInfo {
+                name: "Test Model".to_string(),
+                file_path: "/path/to/model.bin".to_string(),
+                size_mb: 100,
+                description: "Test model description".to_string(),
+                language_support: vec!["en".to_string(), "ja".to_string()],
+                is_available: true,
+            }],
             current_model: "Test Model".to_string(),
         };
 
@@ -243,9 +255,9 @@ mod mock_tests {
             (0, "0 B"),
             (512, "512 B"),
             (1024, "1.0 KB"),
-            (1536, "1.5 KB"),  // 1.5 KB
-            (1048576, "1.0 MB"),  // 1 MB
-            (1610612736, "1.5 GB"),  // 1.5 GB
+            (1536, "1.5 KB"),       // 1.5 KB
+            (1048576, "1.0 MB"),    // 1 MB
+            (1610612736, "1.5 GB"), // 1.5 GB
         ];
 
         for (bytes, expected) in test_cases {
@@ -274,11 +286,11 @@ mod mock_tests {
     #[test]
     fn test_time_format_conversions() {
         let test_cases = vec![
-            (0, "00:00:00,000", "00:00:00.000"),  // 0ms
-            (500, "00:00:00,500", "00:00:00.500"),  // 500ms
-            (1000, "00:00:01,000", "00:00:01.000"),  // 1s
-            (61500, "00:01:01,500", "00:01:01.500"),  // 1m 1.5s
-            (3661500, "01:01:01,500", "01:01:01.500"),  // 1h 1m 1.5s
+            (0, "00:00:00,000", "00:00:00.000"),       // 0ms
+            (500, "00:00:00,500", "00:00:00.500"),     // 500ms
+            (1000, "00:00:01,000", "00:00:01.000"),    // 1s
+            (61500, "00:01:01,500", "00:01:01.500"),   // 1m 1.5s
+            (3661500, "01:01:01,500", "01:01:01.500"), // 1h 1m 1.5s
         ];
 
         for (ms, expected_srt, expected_vtt) in test_cases {

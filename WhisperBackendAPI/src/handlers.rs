@@ -1,7 +1,7 @@
-use crate::audio::{AudioProcessor, format_file_size};
+use crate::audio::{format_file_size, AudioProcessor};
 use crate::config::Config;
 use crate::models::*;
-use crate::whisper::{WhisperEngine, get_supported_languages, get_language_name, preprocess_audio};
+use crate::whisper::{get_language_name, get_supported_languages, preprocess_audio, WhisperEngine};
 use axum::{
     extract::{Multipart, State},
     http::StatusCode,
@@ -122,18 +122,27 @@ pub async fn transcribe_basic(
     let field = multipart
         .next_field()
         .await
-        .map_err(|e| ApiError::new(ApiErrorCode::InvalidInput, format!("マルチパートデータの解析に失敗: {}", e)))?
-        .ok_or_else(|| ApiError::new(ApiErrorCode::InvalidInput, "ファイルフィールドが見つかりません"))?;
+        .map_err(|e| {
+            ApiError::new(
+                ApiErrorCode::InvalidInput,
+                format!("マルチパートデータの解析に失敗: {}", e),
+            )
+        })?
+        .ok_or_else(|| {
+            ApiError::new(
+                ApiErrorCode::InvalidInput,
+                "ファイルフィールドが見つかりません",
+            )
+        })?;
 
-    let filename = field
-        .file_name()
-        .unwrap_or("audio")
-        .to_string();
+    let filename = field.file_name().unwrap_or("audio").to_string();
 
-    let file_data = field
-        .bytes()
-        .await
-        .map_err(|e| ApiError::new(ApiErrorCode::InvalidInput, format!("ファイルデータの読み込みに失敗: {}", e)))?;
+    let file_data = field.bytes().await.map_err(|e| {
+        ApiError::new(
+            ApiErrorCode::InvalidInput,
+            format!("ファイルデータの読み込みに失敗: {}", e),
+        )
+    })?;
 
     // 処理を実行
     // - 共通処理 `process_transcription` へ委譲
@@ -147,7 +156,8 @@ pub async fn transcribe_basic(
             include_timestamps: Some(false),
         },
         start_time,
-    ).await;
+    )
+    .await;
 
     // 統計情報を更新
     // - 成功: 平均処理時間の算出に用いる
@@ -155,7 +165,7 @@ pub async fn transcribe_basic(
     match &result {
         Ok(response) => {
             let mut stats = state.stats.lock().unwrap();
-            stats.record_success(response.processing_time_ms);
+            stats.record_success(response.processing_time_ms, response.duration_ms);
         }
         Err(_) => {
             let mut stats = state.stats.lock().unwrap();
@@ -192,11 +202,12 @@ pub async fn transcribe_with_timestamps(
     // - file: 音声データ本体
     // - language: 言語コード（例: ja, en, auto など）
     // - translate_to_english: true/false
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| ApiError::new(ApiErrorCode::InvalidInput, format!("マルチパートデータの解析に失敗: {}", e)))?
-    {
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        ApiError::new(
+            ApiErrorCode::InvalidInput,
+            format!("マルチパートデータの解析に失敗: {}", e),
+        )
+    })? {
         let field_name = field.name().unwrap_or("").to_string();
 
         match field_name.as_str() {
@@ -205,21 +216,30 @@ pub async fn transcribe_with_timestamps(
                 file_data = field
                     .bytes()
                     .await
-                    .map_err(|e| ApiError::new(ApiErrorCode::InvalidInput, format!("ファイルデータの読み込みに失敗: {}", e)))?
+                    .map_err(|e| {
+                        ApiError::new(
+                            ApiErrorCode::InvalidInput,
+                            format!("ファイルデータの読み込みに失敗: {}", e),
+                        )
+                    })?
                     .to_vec();
             }
             "language" => {
-                let language = field
-                    .text()
-                    .await
-                    .map_err(|e| ApiError::new(ApiErrorCode::InvalidInput, format!("言語パラメータの読み込みに失敗: {}", e)))?;
+                let language = field.text().await.map_err(|e| {
+                    ApiError::new(
+                        ApiErrorCode::InvalidInput,
+                        format!("言語パラメータの読み込みに失敗: {}", e),
+                    )
+                })?;
                 request.language = Some(language);
             }
             "translate_to_english" => {
-                let translate = field
-                    .text()
-                    .await
-                    .map_err(|e| ApiError::new(ApiErrorCode::InvalidInput, format!("翻訳パラメータの読み込みに失敗: {}", e)))?;
+                let translate = field.text().await.map_err(|e| {
+                    ApiError::new(
+                        ApiErrorCode::InvalidInput,
+                        format!("翻訳パラメータの読み込みに失敗: {}", e),
+                    )
+                })?;
                 request.translate_to_english = Some(translate.parse().unwrap_or(false));
             }
             _ => {} // 未知のフィールドは無視
@@ -227,19 +247,26 @@ pub async fn transcribe_with_timestamps(
     }
 
     if file_data.is_empty() {
-        return Err(ApiError::new(ApiErrorCode::InvalidInput, "ファイルが見つかりません"));
+        return Err(ApiError::new(
+            ApiErrorCode::InvalidInput,
+            "ファイルが見つかりません",
+        ));
     }
 
     // 処理を実行
-    let result = process_transcription(state.clone(), file_data, filename, request, start_time).await;
+    let result =
+        process_transcription(state.clone(), file_data, filename, request, start_time).await;
 
     // 統計情報を更新しつつ、セグメントのみ返却
     match result {
         Ok(axum::response::Json(resp)) => {
-            let mut stats = state.stats.lock().unwrap();
-            stats.record_success(resp.processing_time_ms);
-
+            let processing_time_ms = resp.processing_time_ms;
+            let duration_ms = resp.duration_ms;
             let segments = resp.segments.unwrap_or_default();
+
+            let mut stats = state.stats.lock().unwrap();
+            stats.record_success(processing_time_ms, duration_ms);
+
             Ok(Json(segments))
         }
         Err(e) => {
@@ -347,7 +374,12 @@ async fn process_transcription(
         }
     })
     .await
-    .map_err(|e| ApiError::new(ApiErrorCode::InternalError, format!("処理スレッドエラー: {}", e)))?;
+    .map_err(|e| {
+        ApiError::new(
+            ApiErrorCode::InternalError,
+            format!("処理スレッドエラー: {}", e),
+        )
+    })?;
 
     match processing_result {
         Ok((text, segments, language, duration_ms, processing_time_ms)) => {
@@ -523,8 +555,9 @@ pub fn detect_gpu_libraries() -> GpuLibraryInfo {
     // CUDA Runtime検出
     #[cfg(target_os = "linux")]
     {
-        if std::path::Path::new("/usr/local/cuda/lib64/libcudart.so").exists() ||
-           std::path::Path::new("/usr/lib/x86_64-linux-gnu/libcudart.so").exists() {
+        if std::path::Path::new("/usr/local/cuda/lib64/libcudart.so").exists()
+            || std::path::Path::new("/usr/lib/x86_64-linux-gnu/libcudart.so").exists()
+        {
             cuda_runtime_detected = true;
             notes.push("CUDA Runtime library found".to_string());
         } else {
@@ -532,8 +565,9 @@ pub fn detect_gpu_libraries() -> GpuLibraryInfo {
         }
 
         // cuBLAS検出
-        if std::path::Path::new("/usr/local/cuda/lib64/libcublas.so").exists() ||
-           std::path::Path::new("/usr/lib/x86_64-linux-gnu/libcublas.so").exists() {
+        if std::path::Path::new("/usr/local/cuda/lib64/libcublas.so").exists()
+            || std::path::Path::new("/usr/lib/x86_64-linux-gnu/libcublas.so").exists()
+        {
             cublas_detected = true;
             notes.push("cuBLAS library found".to_string());
         } else {
@@ -569,11 +603,16 @@ pub fn generate_gpu_recommendations(config: &Config, gpu_actually_enabled: bool)
         recommendations.push("GPUが設定で有効化されているが実際には使用されていません".to_string());
 
         if std::env::var("WHISPER_CUBLAS").unwrap_or_default() != "1" {
-            recommendations.push("WHISPER_CUBLAS=1 環境変数を設定してリビルドしてください".to_string());
+            recommendations
+                .push("WHISPER_CUBLAS=1 環境変数を設定してリビルドしてください".to_string());
         }
 
-        recommendations.push("以下のコマンドでリビルドを試してください: WHISPER_CUBLAS=1 cargo build --release".to_string());
-        recommendations.push("CUDAツールキットがインストールされているか確認してください".to_string());
+        recommendations.push(
+            "以下のコマンドでリビルドを試してください: WHISPER_CUBLAS=1 cargo build --release"
+                .to_string(),
+        );
+        recommendations
+            .push("CUDAツールキットがインストールされているか確認してください".to_string());
         // 実際にはCPU処理になる旨も明記
         recommendations.push("CPU処理で動作しています".to_string());
     } else if gpu_actually_enabled {

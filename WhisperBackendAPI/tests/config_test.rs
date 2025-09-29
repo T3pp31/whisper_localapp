@@ -19,7 +19,10 @@ mod config_tests {
         assert_eq!(config.server.max_request_size, 100 * 1024 * 1024);
 
         // Whisper設定
-        assert_eq!(config.whisper.model_path, "models/ggml-large-v3-turbo-q5_0.bin");
+        assert_eq!(
+            config.whisper.model_path,
+            "models/ggml-large-v3-turbo-q5_0.bin"
+        );
         assert_eq!(config.whisper.default_model, "large-q5_0");
         assert_eq!(config.whisper.language, "auto");
         assert_eq!(config.whisper.enable_gpu, true);
@@ -59,8 +62,14 @@ mod config_tests {
         // 設定値が一致することを確認
         assert_eq!(original_config.server.host, loaded_config.server.host);
         assert_eq!(original_config.server.port, loaded_config.server.port);
-        assert_eq!(original_config.whisper.enable_gpu, loaded_config.whisper.enable_gpu);
-        assert_eq!(original_config.audio.sample_rate, loaded_config.audio.sample_rate);
+        assert_eq!(
+            original_config.whisper.enable_gpu,
+            loaded_config.whisper.enable_gpu
+        );
+        assert_eq!(
+            original_config.audio.sample_rate,
+            loaded_config.audio.sample_rate
+        );
     }
 
     /// 不正な設定ファイルの処理テスト
@@ -160,7 +169,10 @@ mod config_tests {
 
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Whisperモデルファイルが見つかりません"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Whisperモデルファイルが見つかりません"));
     }
 
     /// バリデーションテスト - ゼロスレッド数
@@ -181,7 +193,10 @@ mod config_tests {
 
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Whisperスレッド数は1以上である必要があります"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Whisperスレッド数は1以上である必要があります"));
     }
 
     /// バリデーションテスト - ゼロ同時リクエスト数
@@ -202,7 +217,10 @@ mod config_tests {
 
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("最大同時リクエスト数は1以上である必要があります"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("最大同時リクエスト数は1以上である必要があります"));
     }
 
     /// バリデーションテスト - ゼロファイルサイズ制限
@@ -223,7 +241,10 @@ mod config_tests {
 
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("最大ファイルサイズは1MB以上である必要があります"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("最大ファイルサイズは1MB以上である必要があります"));
     }
 
     /// ヘルパーメソッドのテスト
@@ -286,7 +307,13 @@ mod config_tests {
 
         // 元の設定と一致することを確認
         assert_eq!(original_config.server.host, deserialized_config.server.host);
-        assert_eq!(original_config.whisper.enable_gpu, deserialized_config.whisper.enable_gpu);
-        assert_eq!(original_config.audio.sample_rate, deserialized_config.audio.sample_rate);
+        assert_eq!(
+            original_config.whisper.enable_gpu,
+            deserialized_config.whisper.enable_gpu
+        );
+        assert_eq!(
+            original_config.audio.sample_rate,
+            deserialized_config.audio.sample_rate
+        );
     }
 }

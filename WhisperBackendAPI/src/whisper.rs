@@ -85,36 +85,33 @@ impl WhisperEngine {
         }
 
         // コンテキスト作成（GPU有効時に失敗した場合はCPUでフォールバック）
-        let (context, gpu_actually_enabled) = match WhisperContext::new_with_params(model_path, ctx_params) {
-            Ok(ctx) => {
-                if config.whisper.enable_gpu {
-                    println!("✓ GPU対応のWhisperコンテキストの初期化に成功しました");
-                    println!("✓ GPUアクセラレーションが有効です");
-                } else {
-                    println!("✓ CPU専用のWhisperコンテキストの初期化に成功しました");
+        let (context, gpu_actually_enabled) =
+            match WhisperContext::new_with_params(model_path, ctx_params) {
+                Ok(ctx) => {
+                    if config.whisper.enable_gpu {
+                        println!("✓ GPU対応のWhisperコンテキストの初期化に成功しました");
+                        println!("✓ GPUアクセラレーションが有効です");
+                    } else {
+                        println!("✓ CPU専用のWhisperコンテキストの初期化に成功しました");
+                    }
+                    (ctx, config.whisper.enable_gpu)
                 }
-                (ctx, config.whisper.enable_gpu)
-            },
-            Err(e) => {
-                if config.whisper.enable_gpu {
-                    eprintln!(
-                        "⚠ GPU初期化に失敗しました。CPUで再試行します: {}",
-                        e
-                    );
-                    let mut cpu_params = WhisperContextParameters::default();
-                    cpu_params.use_gpu = false;
-                    let cpu_context = WhisperContext::new_with_params(model_path, cpu_params)
-                        .map_err(|e| anyhow::anyhow!("Whisperコンテキストの初期化に失敗: {}", e))?;
-                    println!("✓ CPUでのWhisperコンテキスト初期化にフォールバックしました");
-                    (cpu_context, false)
-                } else {
-                    return Err(anyhow::anyhow!(
-                        "Whisperコンテキストの初期化に失敗: {}",
-                        e
-                    ));
+                Err(e) => {
+                    if config.whisper.enable_gpu {
+                        eprintln!("⚠ GPU初期化に失敗しました。CPUで再試行します: {}", e);
+                        let mut cpu_params = WhisperContextParameters::default();
+                        cpu_params.use_gpu = false;
+                        let cpu_context = WhisperContext::new_with_params(model_path, cpu_params)
+                            .map_err(|e| {
+                            anyhow::anyhow!("Whisperコンテキストの初期化に失敗: {}", e)
+                        })?;
+                        println!("✓ CPUでのWhisperコンテキスト初期化にフォールバックしました");
+                        (cpu_context, false)
+                    } else {
+                        return Err(anyhow::anyhow!("Whisperコンテキストの初期化に失敗: {}", e));
+                    }
                 }
-            }
-        };
+            };
 
         let language = match config.whisper.language.trim() {
             "" => None,
@@ -125,8 +122,16 @@ impl WhisperEngine {
         println!(
             "✓ Whisperモデルを読み込みました: {} (GPU: {} -> 実際: {})",
             model_path,
-            if config.whisper.enable_gpu { "設定有効" } else { "設定無効" },
-            if gpu_actually_enabled { "有効" } else { "無効" }
+            if config.whisper.enable_gpu {
+                "設定有効"
+            } else {
+                "設定無効"
+            },
+            if gpu_actually_enabled {
+                "有効"
+            } else {
+                "無効"
+            }
         );
         println!("==================");
 
@@ -268,7 +273,8 @@ impl WhisperEngine {
 
         // 言語検出結果を取得（可能であれば）
         // - 明示指定が優先。無ければエンジン既定（Config）を返す
-        let detected_language = language_override.map(|lang| lang.to_string())
+        let detected_language = language_override
+            .map(|lang| lang.to_string())
             .or_else(|| self.language.clone());
 
         Ok(TranscriptionResult {
@@ -380,7 +386,10 @@ impl WhisperEnginePool {
             engines.push(engine);
         }
 
-        println!("Whisperエンジンプールを作成しました: {}個のエンジン", pool_size);
+        println!(
+            "Whisperエンジンプールを作成しました: {}個のエンジン",
+            pool_size
+        );
 
         Ok(Self {
             engines,
@@ -390,7 +399,9 @@ impl WhisperEnginePool {
 
     /// 利用可能なエンジンを取得（ラウンドロビン方式）
     pub fn get_engine(&self) -> &WhisperEngine {
-        let index = self.current_index.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let index = self
+            .current_index
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         &self.engines[index % self.engines.len()]
     }
 
@@ -425,10 +436,7 @@ fn normalize_audio(audio_data: &mut [f32]) {
     }
 
     // 最大絶対値を見つける
-    let max_abs = audio_data
-        .iter()
-        .map(|&x| x.abs())
-        .fold(0.0f32, f32::max);
+    let max_abs = audio_data.iter().map(|&x| x.abs()).fold(0.0f32, f32::max);
 
     // すでに範囲内（<= 0.95）の場合は何もしない。
     if max_abs > 0.95 {

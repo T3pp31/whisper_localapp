@@ -46,11 +46,7 @@ mod models_tests {
         #[test]
         fn test_duration_ms_saturating_sub() {
             // end_time < start_timeの場合（通常は起こらないが安全性テスト）
-            let segment = TranscriptionSegment::new(
-                "Test".to_string(),
-                5000,
-                3000,
-            );
+            let segment = TranscriptionSegment::new("Test".to_string(), 5000, 3000);
 
             assert_eq!(segment.duration_ms(), 0); // saturating_subにより0になる
         }
@@ -59,8 +55,8 @@ mod models_tests {
         fn test_to_srt_format() {
             let segment = TranscriptionSegment::new(
                 "Hello, world!".to_string(),
-                1500,  // 00:00:01,500
-                4250,  // 00:00:04,250
+                1500, // 00:00:01,500
+                4250, // 00:00:04,250
             );
 
             let srt = segment.to_srt_format(0); // index 0 -> SRTでは1番目
@@ -91,8 +87,8 @@ mod models_tests {
         fn test_to_vtt_format() {
             let segment = TranscriptionSegment::new(
                 "VTT test".to_string(),
-                2750,  // 00:00:02.750
-                6100,  // 00:00:06.100
+                2750, // 00:00:02.750
+                6100, // 00:00:06.100
             );
 
             let vtt = segment.to_vtt_format();
@@ -144,11 +140,7 @@ mod models_tests {
 
         #[test]
         fn test_segment_clone() {
-            let original = TranscriptionSegment::new(
-                "Clone test".to_string(),
-                1000,
-                2000,
-            );
+            let original = TranscriptionSegment::new("Clone test".to_string(), 1000, 2000);
 
             let cloned = original.clone();
 
@@ -170,7 +162,13 @@ mod models_tests {
             assert_eq!(stats.successful_transcriptions, 0);
             assert_eq!(stats.failed_transcriptions, 0);
             assert_eq!(stats.total_processing_time_ms, 0);
+            assert_eq!(stats.total_audio_duration_ms, 0);
             assert_eq!(stats.average_processing_time_ms, 0.0);
+            assert_eq!(stats.average_processing_time_one_minute_ms, 0.0);
+            assert_eq!(
+                stats.average_processing_time_one_minute_display,
+                "0.00 s/min"
+            );
             assert_eq!(stats.active_requests, 0);
             assert_eq!(stats.uptime_seconds, 0);
         }
@@ -193,20 +191,55 @@ mod models_tests {
             let mut stats = ServerStats::default();
             stats.record_request();
 
-            stats.record_success(1000);
+            stats.record_success(1000, Some(60_000));
 
             assert_eq!(stats.successful_transcriptions, 1);
             assert_eq!(stats.active_requests, 0); // デクリメントされる
             assert_eq!(stats.total_processing_time_ms, 1000);
+            assert_eq!(stats.total_audio_duration_ms, 60_000);
             assert_eq!(stats.average_processing_time_ms, 1000.0);
+            assert_eq!(stats.average_processing_time_one_minute_ms, 1000.0);
+            assert_eq!(
+                stats.average_processing_time_one_minute_display,
+                "1.00 s/min"
+            );
 
             // 2回目の成功を記録
             stats.record_request();
-            stats.record_success(2000);
+            stats.record_success(2000, Some(60_000));
 
             assert_eq!(stats.successful_transcriptions, 2);
             assert_eq!(stats.total_processing_time_ms, 3000);
+            assert_eq!(stats.total_audio_duration_ms, 120_000);
             assert_eq!(stats.average_processing_time_ms, 1500.0); // (1000 + 2000) / 2
+            assert_eq!(stats.average_processing_time_one_minute_ms, 1500.0);
+            assert_eq!(
+                stats.average_processing_time_one_minute_display,
+                "1.50 s/min"
+            );
+        }
+
+        #[test]
+        fn test_average_processing_time_per_minute_scaling() {
+            let mut stats = ServerStats::default();
+            stats.record_request();
+            stats.record_success(500, Some(30_000));
+            assert!((stats.average_processing_time_ms - 1000.0).abs() < 1e-6);
+            assert!((stats.average_processing_time_one_minute_ms - 1000.0).abs() < 1e-6);
+            assert_eq!(
+                stats.average_processing_time_one_minute_display,
+                "1.00 s/min"
+            );
+
+            stats.record_request();
+            stats.record_success(1000, Some(120_000));
+            assert!((stats.average_processing_time_ms - 600.0).abs() < 1e-6);
+            assert!((stats.average_processing_time_one_minute_ms - 600.0).abs() < 1e-6);
+            assert_eq!(
+                stats.average_processing_time_one_minute_display,
+                "0.60 s/min"
+            );
+            assert_eq!(stats.total_audio_duration_ms, 150_000);
         }
 
         #[test]
@@ -245,7 +278,7 @@ mod models_tests {
 
             // 100%成功の場合
             stats.record_request();
-            stats.record_success(1000);
+            stats.record_success(1000, Some(60_000));
             assert_eq!(stats.success_rate(), 100.0);
 
             // 50%成功の場合
@@ -270,20 +303,46 @@ mod models_tests {
             stats.record_failure();
 
             assert_eq!(stats.average_processing_time_ms, 0.0);
+            assert_eq!(stats.average_processing_time_one_minute_ms, 0.0);
+            assert_eq!(
+                stats.average_processing_time_one_minute_display,
+                "0.00 s/min"
+            );
         }
 
         #[test]
         fn test_stats_clone() {
             let mut original = ServerStats::default();
             original.record_request();
-            original.record_success(5000);
+            original.record_success(5000, Some(60_000));
 
             let cloned = original.clone();
 
             assert_eq!(cloned.total_requests, original.total_requests);
-            assert_eq!(cloned.successful_transcriptions, original.successful_transcriptions);
-            assert_eq!(cloned.total_processing_time_ms, original.total_processing_time_ms);
-            assert_eq!(cloned.average_processing_time_ms, original.average_processing_time_ms);
+            assert_eq!(
+                cloned.successful_transcriptions,
+                original.successful_transcriptions
+            );
+            assert_eq!(
+                cloned.total_processing_time_ms,
+                original.total_processing_time_ms
+            );
+            assert_eq!(
+                cloned.total_audio_duration_ms,
+                original.total_audio_duration_ms
+            );
+            assert_eq!(
+                cloned.average_processing_time_ms,
+                original.average_processing_time_ms
+            );
+            assert_eq!(
+                cloned.average_processing_time_one_minute_ms,
+                original.average_processing_time_one_minute_ms
+            );
+            assert_eq!(
+                cloned.average_processing_time_one_minute_display,
+                original.average_processing_time_one_minute_display
+            );
         }
     }
 
@@ -371,12 +430,32 @@ mod models_tests {
 
             for (key, model) in &catalog.models {
                 assert!(!model.name.is_empty(), "Model {} has empty name", key);
-                assert!(!model.file_name.is_empty(), "Model {} has empty file_name", key);
-                assert!(!model.download_url.is_empty(), "Model {} has empty download_url", key);
+                assert!(
+                    !model.file_name.is_empty(),
+                    "Model {} has empty file_name",
+                    key
+                );
+                assert!(
+                    !model.download_url.is_empty(),
+                    "Model {} has empty download_url",
+                    key
+                );
                 assert!(model.size_mb > 0, "Model {} has zero size", key);
-                assert!(!model.description.is_empty(), "Model {} has empty description", key);
-                assert!(!model.language_support.is_empty(), "Model {} has empty language_support", key);
-                assert!(model.download_url.starts_with("https://"), "Model {} has invalid download_url", key);
+                assert!(
+                    !model.description.is_empty(),
+                    "Model {} has empty description",
+                    key
+                );
+                assert!(
+                    !model.language_support.is_empty(),
+                    "Model {} has empty language_support",
+                    key
+                );
+                assert!(
+                    model.download_url.starts_with("https://"),
+                    "Model {} has invalid download_url",
+                    key
+                );
             }
         }
 
@@ -405,7 +484,10 @@ mod models_tests {
         fn test_api_error_code_as_str() {
             assert_eq!(ApiErrorCode::InvalidInput.as_str(), "INVALID_INPUT");
             assert_eq!(ApiErrorCode::FileTooLarge.as_str(), "FILE_TOO_LARGE");
-            assert_eq!(ApiErrorCode::UnsupportedFormat.as_str(), "UNSUPPORTED_FORMAT");
+            assert_eq!(
+                ApiErrorCode::UnsupportedFormat.as_str(),
+                "UNSUPPORTED_FORMAT"
+            );
             assert_eq!(ApiErrorCode::ProcessingFailed.as_str(), "PROCESSING_FAILED");
             assert_eq!(ApiErrorCode::ModelNotLoaded.as_str(), "MODEL_NOT_LOADED");
             assert_eq!(ApiErrorCode::ServerOverloaded.as_str(), "SERVER_OVERLOADED");
@@ -560,11 +642,7 @@ mod models_tests {
 
         #[test]
         fn test_transcription_segment_json_serialization() {
-            let segment = TranscriptionSegment::new(
-                "Test text".to_string(),
-                1000,
-                2000,
-            );
+            let segment = TranscriptionSegment::new("Test text".to_string(), 1000, 2000);
 
             let json = serde_json::to_string(&segment).unwrap();
             let deserialized: TranscriptionSegment = serde_json::from_str(&json).unwrap();
@@ -578,14 +656,36 @@ mod models_tests {
         fn test_server_stats_json_serialization() {
             let mut stats = ServerStats::default();
             stats.record_request();
-            stats.record_success(1500);
+            stats.record_success(1500, Some(60_000));
 
             let json = serde_json::to_string(&stats).unwrap();
             let deserialized: ServerStats = serde_json::from_str(&json).unwrap();
 
             assert_eq!(stats.total_requests, deserialized.total_requests);
-            assert_eq!(stats.successful_transcriptions, deserialized.successful_transcriptions);
-            assert_eq!(stats.average_processing_time_ms, deserialized.average_processing_time_ms);
+            assert_eq!(
+                stats.successful_transcriptions,
+                deserialized.successful_transcriptions
+            );
+            assert_eq!(
+                stats.total_processing_time_ms,
+                deserialized.total_processing_time_ms
+            );
+            assert_eq!(
+                stats.total_audio_duration_ms,
+                deserialized.total_audio_duration_ms
+            );
+            assert_eq!(
+                stats.average_processing_time_ms,
+                deserialized.average_processing_time_ms
+            );
+            assert_eq!(
+                stats.average_processing_time_one_minute_ms,
+                deserialized.average_processing_time_one_minute_ms
+            );
+            assert_eq!(
+                stats.average_processing_time_one_minute_display,
+                deserialized.average_processing_time_one_minute_display
+            );
         }
 
         #[test]
@@ -600,7 +700,10 @@ mod models_tests {
             let deserialized: TranscribeRequest = serde_json::from_str(&json).unwrap();
 
             assert_eq!(request.language, deserialized.language);
-            assert_eq!(request.translate_to_english, deserialized.translate_to_english);
+            assert_eq!(
+                request.translate_to_english,
+                deserialized.translate_to_english
+            );
             assert_eq!(request.include_timestamps, deserialized.include_timestamps);
         }
 

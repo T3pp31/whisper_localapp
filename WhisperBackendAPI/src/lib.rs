@@ -35,7 +35,9 @@ pub mod whisper {
 
     impl WhisperEngine {
         pub fn new(_model_path: &str, _config: &Config) -> Result<Self> {
-            Err(anyhow::anyhow!("Whisper engine not available (feature disabled)"))
+            Err(anyhow::anyhow!(
+                "Whisper engine not available (feature disabled)"
+            ))
         }
 
         pub fn get_model_info(&self) -> ModelInfo {
@@ -51,13 +53,14 @@ pub mod whisper {
     /// サポートされている言語のリストを取得
     pub fn get_supported_languages() -> Vec<&'static str> {
         vec![
-            "auto", "en", "zh", "de", "es", "ru", "ko", "fr", "ja", "pt", "tr", "pl", "ca", "nl", "ar",
-            "sv", "it", "id", "hi", "fi", "vi", "he", "uk", "el", "ms", "cs", "ro", "da", "hu", "ta",
-            "no", "th", "ur", "hr", "bg", "lt", "la", "mi", "ml", "cy", "sk", "te", "fa", "lv", "bn",
-            "sr", "az", "sl", "kn", "et", "mk", "br", "eu", "is", "hy", "ne", "mn", "bs", "kk", "sq",
-            "sw", "gl", "mr", "pa", "si", "km", "sn", "yo", "so", "af", "oc", "ka", "be", "tg", "sd",
-            "gu", "am", "yi", "lo", "uz", "fo", "ht", "ps", "tk", "nn", "mt", "sa", "lb", "my", "bo",
-            "tl", "mg", "as", "tt", "haw", "ln", "ha", "ba", "jw", "su",
+            "auto", "en", "zh", "de", "es", "ru", "ko", "fr", "ja", "pt", "tr", "pl", "ca", "nl",
+            "ar", "sv", "it", "id", "hi", "fi", "vi", "he", "uk", "el", "ms", "cs", "ro", "da",
+            "hu", "ta", "no", "th", "ur", "hr", "bg", "lt", "la", "mi", "ml", "cy", "sk", "te",
+            "fa", "lv", "bn", "sr", "az", "sl", "kn", "et", "mk", "br", "eu", "is", "hy", "ne",
+            "mn", "bs", "kk", "sq", "sw", "gl", "mr", "pa", "si", "km", "sn", "yo", "so", "af",
+            "oc", "ka", "be", "tg", "sd", "gu", "am", "yi", "lo", "uz", "fo", "ht", "ps", "tk",
+            "nn", "mt", "sa", "lb", "my", "bo", "tl", "mg", "as", "tt", "haw", "ln", "ha", "ba",
+            "jw", "su",
         ]
     }
 
@@ -97,10 +100,7 @@ pub mod whisper {
         }
 
         // 最大絶対値を見つける
-        let max_abs = audio_data
-            .iter()
-            .map(|&x| x.abs())
-            .fold(0.0f32, f32::max);
+        let max_abs = audio_data.iter().map(|&x| x.abs()).fold(0.0f32, f32::max);
 
         if max_abs > 0.0 {
             // 正規化係数を計算（最大値を0.95に制限）
@@ -122,9 +122,9 @@ pub mod handlers;
 pub mod handlers {
     // whisper機能が無効の場合のモック実装
     use crate::config::Config;
+    use crate::models::ServerStats;
     use std::sync::{Arc, Mutex};
     use std::time::Instant;
-    use crate::models::ServerStats;
 
     #[derive(Clone)]
     pub struct AppState {
