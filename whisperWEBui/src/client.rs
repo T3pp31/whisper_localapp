@@ -40,6 +40,183 @@ pub struct Segment {
     pub text: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum BackendTimestampedResponse {
+    Full(BackendFullResponse),
+    SegmentsOnly(Vec<BackendSegment>),
+}
+
+#[derive(Debug, Deserialize)]
+struct BackendFullResponse {
+    text: String,
+    #[serde(default)]
+    segments: Vec<BackendSegment>,
+    #[serde(default)]
+    language: Option<String>,
+    #[serde(default)]
+    duration: Option<f64>,
+    #[serde(rename = "duration_ms", default)]
+    duration_ms: Option<f64>,
+    #[serde(default)]
+    processing_time: Option<f64>,
+    #[serde(rename = "processing_time_ms", default)]
+    processing_time_ms: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BackendSegment {
+    text: String,
+    #[serde(default)]
+    start: Option<f64>,
+    #[serde(rename = "start_time", default)]
+    start_time: Option<f64>,
+    #[serde(rename = "start_ms", default)]
+    start_ms: Option<f64>,
+    #[serde(rename = "start_time_ms", default)]
+    start_time_ms: Option<f64>,
+    #[serde(default)]
+    end: Option<f64>,
+    #[serde(rename = "end_time", default)]
+    end_time: Option<f64>,
+    #[serde(rename = "end_ms", default)]
+    end_ms: Option<f64>,
+    #[serde(rename = "end_time_ms", default)]
+    end_time_ms: Option<f64>,
+    #[serde(default)]
+    timestamp: Option<Vec<f64>>,
+    #[serde(rename = "timestamps", default)]
+    timestamps: Option<Vec<f64>>,
+}
+
+impl BackendSegment {
+    fn into_segment(self) -> Segment {
+        let BackendSegment {
+            text,
+            start,
+            start_time,
+            start_ms,
+            start_time_ms,
+            end,
+            end_time,
+            end_ms,
+            end_time_ms,
+            timestamp,
+            timestamps,
+        } = self;
+
+        let bounds_from_array = timestamp
+            .as_ref()
+            .and_then(|values| extract_bounds(values))
+            .or_else(|| timestamps.as_ref().and_then(|values| extract_bounds(values)));
+
+        let start_seconds = bounds_from_array
+            .map(|(s, _)| s)
+            .or(start)
+            .or(start_time)
+            .or(start_ms.map(|ms| ms / 1000.0))
+            .or(start_time_ms.map(|ms| ms / 1000.0))
+            .unwrap_or(0.0);
+
+        let end_seconds = bounds_from_array
+            .map(|(_, e)| e)
+            .or(end)
+            .or(end_time)
+            .or(end_ms.map(|ms| ms / 1000.0))
+            .or(end_time_ms.map(|ms| ms / 1000.0))
+            .unwrap_or(start_seconds);
+
+        Segment {
+            start: start_seconds,
+            end: end_seconds,
+            text,
+        }
+    }
+}
+
+fn extract_bounds(values: &[f64]) -> Option<(f64, f64)> {
+    if values.len() >= 2 {
+        Some((values[0], values[1]))
+    } else {
+        None
+    }
+}
+
+impl TimestampedTranscriptionResponse {
+    fn from_backend(raw: BackendTimestampedResponse) -> Self {
+        match raw {
+            BackendTimestampedResponse::Full(full) => {
+                let segments = full
+                    .segments
+                    .into_iter()
+                    .map(BackendSegment::into_segment)
+                    .collect::<Vec<_>>();
+
+                let duration = full
+                    .duration
+                    .or(full.duration_ms.map(|ms| ms / 1000.0))
+                    .or_else(|| Self::max_segment_end(&segments));
+
+                let processing_time = full
+                    .processing_time
+                    .or(full.processing_time_ms.map(|ms| ms / 1000.0));
+
+                TimestampedTranscriptionResponse {
+                    text: full.text,
+                    segments,
+                    language: full.language,
+                    duration,
+                    processing_time,
+                }
+            }
+            BackendTimestampedResponse::SegmentsOnly(segments_only) => {
+                let segments = segments_only
+                    .into_iter()
+                    .map(BackendSegment::into_segment)
+                    .collect::<Vec<_>>();
+
+                let combined_text: String = segments
+                    .iter()
+                    .map(|segment| segment.text.as_str())
+                    .collect();
+
+                let text = if combined_text.is_empty() {
+                    combined_text
+                } else {
+                    combined_text.trim().to_string()
+                };
+
+                let duration = Self::max_segment_end(&segments);
+
+                TimestampedTranscriptionResponse {
+                    text,
+                    segments,
+                    language: None,
+                    duration,
+                    processing_time: None,
+                }
+            }
+        }
+    }
+
+    fn max_segment_end(segments: &[Segment]) -> Option<f64> {
+        segments
+            .iter()
+            .map(|segment| segment.end)
+            .fold(None, |acc, value| match acc {
+                Some(current) => Some(current.max(value)),
+                None => Some(value),
+            })
+    }
+
+    pub fn from_backend_json(payload: &str) -> Result<Self, ClientError> {
+        let raw: BackendTimestampedResponse = serde_json::from_str(payload)
+            .map_err(|e| ClientError::InvalidResponse(format!("JSONパースエラー: {}", e)))?;
+
+        Ok(Self::from_backend(raw))
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HealthResponse {
     pub status: String,
@@ -279,8 +456,8 @@ impl WhisperClient {
             )));
         }
 
-        let transcription_response: TimestampedTranscriptionResponse = response.json().await
-            .map_err(|e| ClientError::InvalidResponse(format!("JSONパースエラー: {}", e)))?;
+        let body = response.text().await?;
+        let transcription_response = TimestampedTranscriptionResponse::from_backend_json(&body)?;
 
         Ok(transcription_response)
     }
