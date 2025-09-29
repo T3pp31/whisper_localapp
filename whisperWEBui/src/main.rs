@@ -1,5 +1,5 @@
-use whisper_webui::{config::Config, handlers::AppState};
 use std::net::SocketAddr;
+use whisper_webui::{config::Config, handlers::AppState};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -17,7 +17,9 @@ async fn main() -> anyhow::Result<()> {
     let app_state = AppState::new(config.clone());
     let app = whisper_webui::create_app(app_state);
 
-    let addr: SocketAddr = config.server_address().parse()
+    let addr: SocketAddr = config
+        .server_address()
+        .parse()
         .map_err(|e| anyhow::anyhow!("無効なサーバーアドレス: {}", e))?;
 
     println!("WebUIサーバーを起動します: http://{}", addr);

@@ -38,11 +38,23 @@ pub struct WebUIConfig {
     pub default_language: Option<String>,
     #[serde(default = "WebUIConfig::default_timeline_update_interval_ms")]
     pub timeline_update_interval_ms: u64,
+    #[serde(default = "WebUIConfig::default_upload_prompt_text")]
+    pub upload_prompt_text: String,
+    #[serde(default = "WebUIConfig::default_upload_success_text")]
+    pub upload_success_text: String,
 }
 
 impl WebUIConfig {
     const fn default_timeline_update_interval_ms() -> u64 {
         200
+    }
+
+    fn default_upload_prompt_text() -> String {
+        "音声ファイルをドラッグ&ドロップするか、クリックして選択してください".to_string()
+    }
+
+    fn default_upload_success_text() -> String {
+        "{filename} を選択しました".to_string()
     }
 }
 
@@ -74,7 +86,9 @@ impl Config {
         }
 
         if self.server.max_request_size_mb < self.webui.max_file_size_mb {
-            return Err(anyhow::anyhow!("最大リクエストサイズは最大ファイルサイズ以上である必要があります"));
+            return Err(anyhow::anyhow!(
+                "最大リクエストサイズは最大ファイルサイズ以上である必要があります"
+            ));
         }
 
         if self.backend.base_url.is_empty() {
@@ -87,6 +101,18 @@ impl Config {
 
         if self.webui.timeline_update_interval_ms == 0 {
             return Err(anyhow::anyhow!("タイムライン更新間隔が無効です"));
+        }
+
+        if self.webui.upload_prompt_text.trim().is_empty() {
+            return Err(anyhow::anyhow!(
+                "アップロード案内テキストが設定されていません"
+            ));
+        }
+
+        if self.webui.upload_success_text.trim().is_empty() {
+            return Err(anyhow::anyhow!(
+                "アップロード完了テキストが設定されていません"
+            ));
         }
 
         Ok(())
@@ -105,7 +131,8 @@ impl Config {
     }
 
     pub fn is_allowed_extension(&self, extension: &str) -> bool {
-        self.webui.allowed_extensions
+        self.webui
+            .allowed_extensions
             .iter()
             .any(|ext| ext.eq_ignore_ascii_case(extension))
     }
@@ -139,6 +166,8 @@ impl Default for Config {
                 ],
                 default_language: None,
                 timeline_update_interval_ms: WebUIConfig::default_timeline_update_interval_ms(),
+                upload_prompt_text: WebUIConfig::default_upload_prompt_text(),
+                upload_success_text: WebUIConfig::default_upload_success_text(),
             },
         }
     }

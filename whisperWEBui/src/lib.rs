@@ -36,7 +36,7 @@ pub fn create_app(app_state: AppState) -> Router {
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
                 .layer(cors)
-                .layer(DefaultBodyLimit::max(max_request_size))
+                .layer(DefaultBodyLimit::max(max_request_size)),
         )
         .with_state(app_state)
 }

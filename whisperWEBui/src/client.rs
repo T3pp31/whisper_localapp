@@ -108,7 +108,11 @@ impl BackendSegment {
         let bounds_from_array = timestamp
             .as_ref()
             .and_then(|values| extract_bounds(values))
-            .or_else(|| timestamps.as_ref().and_then(|values| extract_bounds(values)));
+            .or_else(|| {
+                timestamps
+                    .as_ref()
+                    .and_then(|values| extract_bounds(values))
+            });
 
         let start_seconds = bounds_from_array
             .map(|(s, _)| s)
@@ -310,7 +314,9 @@ impl WhisperClient {
             )));
         }
 
-        let health_response: HealthResponse = response.json().await
+        let health_response: HealthResponse = response
+            .json()
+            .await
             .map_err(|e| ClientError::InvalidResponse(format!("JSONパースエラー: {}", e)))?;
 
         Ok(health_response)
@@ -328,7 +334,9 @@ impl WhisperClient {
             )));
         }
 
-        let stats_response: StatsResponse = response.json().await
+        let stats_response: StatsResponse = response
+            .json()
+            .await
             .map_err(|e| ClientError::InvalidResponse(format!("JSONパースエラー: {}", e)))?;
 
         Ok(stats_response)
@@ -346,7 +354,9 @@ impl WhisperClient {
             )));
         }
 
-        let models_response: ModelsResponse = response.json().await
+        let models_response: ModelsResponse = response
+            .json()
+            .await
             .map_err(|e| ClientError::InvalidResponse(format!("JSONパースエラー: {}", e)))?;
 
         Ok(models_response)
@@ -364,7 +374,9 @@ impl WhisperClient {
             )));
         }
 
-        let languages_response: LanguagesResponse = response.json().await
+        let languages_response: LanguagesResponse = response
+            .json()
+            .await
             .map_err(|e| ClientError::InvalidResponse(format!("JSONパースエラー: {}", e)))?;
 
         Ok(languages_response)
@@ -382,7 +394,9 @@ impl WhisperClient {
             )));
         }
 
-        let gpu_status_response: GpuStatusResponse = response.json().await
+        let gpu_status_response: GpuStatusResponse = response
+            .json()
+            .await
             .map_err(|e| ClientError::InvalidResponse(format!("JSONパースエラー: {}", e)))?;
 
         Ok(gpu_status_response)
@@ -396,8 +410,10 @@ impl WhisperClient {
     ) -> Result<TranscriptionResponse, ClientError> {
         let url = format!("{}/transcribe", self.base_url);
 
-        let mut form = Form::new()
-            .part("file", Part::bytes(audio_data).file_name(filename.to_string()));
+        let mut form = Form::new().part(
+            "file",
+            Part::bytes(audio_data).file_name(filename.to_string()),
+        );
 
         if let Some(ref language) = request.language {
             form = form.text("language", language.clone());
@@ -419,7 +435,9 @@ impl WhisperClient {
             )));
         }
 
-        let transcription_response: TranscriptionResponse = response.json().await
+        let transcription_response: TranscriptionResponse = response
+            .json()
+            .await
             .map_err(|e| ClientError::InvalidResponse(format!("JSONパースエラー: {}", e)))?;
 
         Ok(transcription_response)
@@ -433,8 +451,10 @@ impl WhisperClient {
     ) -> Result<TimestampedTranscriptionResponse, ClientError> {
         let url = format!("{}/transcribe-with-timestamps", self.base_url);
 
-        let mut form = Form::new()
-            .part("file", Part::bytes(audio_data).file_name(filename.to_string()));
+        let mut form = Form::new().part(
+            "file",
+            Part::bytes(audio_data).file_name(filename.to_string()),
+        );
 
         if let Some(ref language) = request.language {
             form = form.text("language", language.clone());

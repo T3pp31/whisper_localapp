@@ -99,6 +99,12 @@ main {
     margin-bottom: 20px;
 }
 
+.upload-area.has-file {
+    border-color: #38a169;
+    background: #f0fff4;
+    box-shadow: 0 0 0 3px rgba(72, 187, 120, 0.2);
+}
+
 .upload-area:hover {
     border-color: #4299e1;
     background: #ebf8ff;
@@ -121,9 +127,30 @@ main {
     margin-bottom: 10px;
 }
 
+.upload-text.uploaded {
+    color: #2f855a;
+    font-weight: 600;
+}
+
+.upload-status {
+    font-size: 0.95rem;
+    color: #2f855a;
+    margin-bottom: 10px;
+    display: none;
+}
+
 .upload-info {
     font-size: 0.9rem;
     color: #718096;
+}
+
+.upload-preview {
+    margin-top: 15px;
+    display: none;
+}
+
+.upload-preview audio {
+    width: 100%;
 }
 
 /* プログレスバー */

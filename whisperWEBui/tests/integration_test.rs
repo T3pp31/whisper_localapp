@@ -12,10 +12,7 @@ async fn test_index_page() {
     let app_state = AppState::new(config);
     let app = whisper_webui::create_app(app_state);
 
-    let request = Request::builder()
-        .uri("/")
-        .body(Body::empty())
-        .unwrap();
+    let request = Request::builder().uri("/").body(Body::empty()).unwrap();
 
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -89,6 +86,14 @@ async fn test_config_validation() {
     config.webui.max_file_size_mb = 100;
     config.webui.timeline_update_interval_ms = 0;
     assert!(config.validate().is_err());
+
+    config.webui.timeline_update_interval_ms = 200;
+    config.webui.upload_prompt_text = String::new();
+    assert!(config.validate().is_err());
+
+    config.webui.upload_prompt_text = "案内".to_string();
+    config.webui.upload_success_text = String::new();
+    assert!(config.validate().is_err());
 }
 
 #[tokio::test]
@@ -133,10 +138,7 @@ async fn test_index_contains_language_and_timeline_config() {
     let app_state = AppState::new(config);
     let app = whisper_webui::create_app(app_state);
 
-    let request = Request::builder()
-        .uri("/")
-        .body(Body::empty())
-        .unwrap();
+    let request = Request::builder().uri("/").body(Body::empty()).unwrap();
 
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -156,10 +158,7 @@ async fn test_index_contains_transcribe_button() {
     let app_state = AppState::new(config);
     let app = whisper_webui::create_app(app_state);
 
-    let request = Request::builder()
-        .uri("/")
-        .body(Body::empty())
-        .unwrap();
+    let request = Request::builder().uri("/").body(Body::empty()).unwrap();
 
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -171,4 +170,30 @@ async fn test_index_contains_transcribe_button() {
 
     assert!(html.contains("id=\"transcribe-btn\""));
     assert!(html.contains("data-loading-label=\"文字起こし中...\""));
+}
+
+#[tokio::test]
+async fn test_index_contains_upload_ui_configuration() {
+    let mut config = Config::default();
+    config.webui.upload_prompt_text = "ドラッグ&ドロップまたはクリックで選択".to_string();
+    config.webui.upload_success_text = "✓ {filename} を準備しました".to_string();
+
+    let app_state = AppState::new(config);
+    let app = whisper_webui::create_app(app_state);
+
+    let request = Request::builder().uri("/").body(Body::empty()).unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let html = String::from_utf8(body.to_vec()).unwrap();
+
+    assert!(html.contains("id=\"upload-text\""));
+    assert!(html.contains("data-default-text=\"ドラッグ&amp;ドロップまたはクリックで選択\""));
+    assert!(html.contains("data-success-text=\"✓ {filename} を準備しました\""));
+    assert!(html.contains("id=\"upload-preview\""));
+    assert!(html.contains("id=\"upload-audio-preview\""));
 }

@@ -5,6 +5,14 @@ class WhisperWebUI {
         this.uploadProgress = document.getElementById('upload-progress');
         this.progressFill = document.getElementById('progress-fill');
         this.progressText = document.getElementById('progress-text');
+        this.uploadText = document.getElementById('upload-text');
+        this.uploadStatus = document.getElementById('upload-status');
+        this.uploadPreviewContainer = document.getElementById('upload-preview');
+        this.uploadPreviewAudio = document.getElementById('upload-audio-preview');
+        this.defaultUploadText = this.uploadText?.dataset.defaultText?.trim()
+            || this.uploadText?.textContent?.trim()
+            || '';
+        this.uploadSuccessTemplate = this.uploadStatus?.dataset.successText?.trim() || '';
         this.resultsSection = document.getElementById('results-section');
         this.languageSelect = document.getElementById('language-select');
         this.audioContainer = document.getElementById('audio-player-container');
@@ -239,16 +247,75 @@ class WhisperWebUI {
         }
     }
 
+    setUploadState(fileName) {
+        if (!this.uploadArea || !this.uploadText) {
+            return;
+        }
+
+        if (fileName) {
+            this.uploadText.textContent = fileName;
+            this.uploadText.classList.add('uploaded');
+            this.uploadArea.classList.add('has-file');
+
+            if (this.uploadStatus) {
+                this.uploadStatus.textContent = this.formatUploadSuccessMessage(fileName);
+                this.uploadStatus.style.display = 'block';
+            }
+
+            if (this.uploadPreviewContainer && this.uploadPreviewAudio?.src) {
+                this.uploadPreviewContainer.style.display = 'block';
+            }
+
+            return;
+        }
+
+        this.uploadText.textContent = this.defaultUploadText;
+        this.uploadText.classList.remove('uploaded');
+        this.uploadArea.classList.remove('has-file');
+
+        if (this.uploadStatus) {
+            this.uploadStatus.style.display = 'none';
+            this.uploadStatus.textContent = '';
+        }
+
+        if (this.uploadPreviewContainer && this.uploadPreviewAudio) {
+            this.uploadPreviewContainer.style.display = 'none';
+            this.uploadPreviewAudio.pause();
+            this.uploadPreviewAudio.removeAttribute('src');
+            this.uploadPreviewAudio.load();
+        }
+    }
+
+    formatUploadSuccessMessage(fileName) {
+        if (!fileName) {
+            return '';
+        }
+
+        if (!this.uploadSuccessTemplate) {
+            return `アップロード準備完了: ${fileName}`;
+        }
+
+        if (this.uploadSuccessTemplate.includes('{filename}')) {
+            return this.uploadSuccessTemplate.split('{filename}').join(fileName);
+        }
+
+        return `${this.uploadSuccessTemplate} ${fileName}`;
+    }
+
     handleFileSelect(file) {
         if (!file) return;
 
         if (!this.isFileAllowed(file)) {
             this.showNotification('サポートされていないファイル形式です', 'error');
+            if (!this.currentFile) {
+                this.setUploadState(null);
+            }
             return;
         }
 
         this.currentFile = file;
         this.prepareAudio(file);
+        this.setUploadState(file.name);
         this.showNotification(`ファイル選択: ${file.name}。文字起こしボタンをクリックして開始してください`, 'success');
         this.updateTranscribeButtonState();
     }
@@ -297,8 +364,16 @@ class WhisperWebUI {
         this.audioUrl = URL.createObjectURL(file);
         this.audioPlayer.src = this.audioUrl;
         this.audioPlayer.currentTime = 0;
+        if (this.uploadPreviewAudio) {
+            this.uploadPreviewAudio.src = this.audioUrl;
+            this.uploadPreviewAudio.currentTime = 0;
+            if (this.uploadPreviewContainer) {
+                this.uploadPreviewContainer.style.display = 'block';
+            }
+        }
         this.timelineProgress && (this.timelineProgress.style.width = '0%');
         this.lastTimelineUpdate = 0;
+        this.updateAudioAvailability();
     }
 
     async uploadFile() {
@@ -675,6 +750,7 @@ class WhisperWebUI {
         }
         this.currentResultData = null;
         this.currentFile = null;
+        this.setUploadState(null);
         this.fileInput && (this.fileInput.value = '');
         this.segmentElements = [];
         this.currentSegments = [];

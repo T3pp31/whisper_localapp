@@ -1,4 +1,4 @@
-use crate::client::{WhisperClient, TranscriptionRequest};
+use crate::client::{TranscriptionRequest, WhisperClient};
 use crate::config::Config;
 use axum::{
     extract::{Multipart, State},
@@ -24,6 +24,14 @@ impl AppState {
     }
 }
 
+fn encode_html(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
 
 #[derive(Debug, Deserialize)]
 pub struct UploadForm {
@@ -48,7 +56,10 @@ pub struct ErrorResponse {
 
 pub async fn index(State(state): State<AppState>) -> Html<String> {
     let allowed_exts = state.config.webui.allowed_extensions.join(", ");
-    let accept_types = state.config.webui.allowed_extensions
+    let accept_types = state
+        .config
+        .webui
+        .allowed_extensions
         .iter()
         .map(|ext| format!(".{}", ext))
         .collect::<Vec<_>>()
@@ -60,8 +71,11 @@ pub async fn index(State(state): State<AppState>) -> Html<String> {
         .clone()
         .unwrap_or_default();
     let timeline_update_ms = state.config.webui.timeline_update_interval_ms;
+    let upload_prompt_text = encode_html(&state.config.webui.upload_prompt_text);
+    let upload_success_text = encode_html(&state.config.webui.upload_success_text);
 
-    let html = format!(r#"
+    let html = format!(
+        r#"
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -91,9 +105,13 @@ pub async fn index(State(state): State<AppState>) -> Html<String> {
             <div class="upload-section">
                 <div class="upload-area" id="upload-area">
                     <div class="upload-content">
-                        <div class="upload-icon">📁</div>
-                        <p class="upload-text">音声ファイルをドラッグ&ドロップするか、クリックして選択してください</p>
+                        <div class="upload-icon" aria-hidden="true">📁</div>
+                        <p class="upload-text" id="upload-text" data-default-text="{}">{}</p>
+                        <p class="upload-status" id="upload-status" data-success-text="{}" aria-live="polite" style="display: none;"></p>
                         <p class="upload-info">対応形式: {} (最大 {}MB)</p>
+                        <div class="upload-preview" id="upload-preview" style="display: none;">
+                            <audio id="upload-audio-preview" controls></audio>
+                        </div>
                         <input type="file" id="file-input" accept="{}" hidden>
                     </div>
                     <div class="upload-progress" id="upload-progress" style="display: none;">
@@ -198,6 +216,9 @@ pub async fn index(State(state): State<AppState>) -> Html<String> {
         default_language,
         timeline_update_ms,
         state.config.webui.title,
+        upload_prompt_text,
+        upload_prompt_text,
+        upload_success_text,
         allowed_exts,
         state.config.webui.max_file_size_mb,
         accept_types
@@ -326,10 +347,16 @@ pub async fn upload_file(
     };
 
     let result = if with_timestamps {
-        state.client.transcribe_with_timestamps(file_data, &filename, &request).await
+        state
+            .client
+            .transcribe_with_timestamps(file_data, &filename, &request)
+            .await
             .map(|response| json!(response))
     } else {
-        state.client.transcribe(file_data, &filename, &request).await
+        state
+            .client
+            .transcribe(file_data, &filename, &request)
+            .await
             .map(|response| json!(response))
     };
 

@@ -13,7 +13,9 @@ fn parse_segments_only_payload() {
     assert_eq!(response.segments.len(), 2);
     assert_eq!(response.text, "Hello world");
 
-    let duration = response.duration.expect("duration should be derived from segments");
+    let duration = response
+        .duration
+        .expect("duration should be derived from segments");
     assert!((duration - 2.5).abs() < 1e-6);
 
     assert!(response.processing_time.is_none());

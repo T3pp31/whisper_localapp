@@ -13,3 +13,5 @@ max_file_size_mb = 100
 allowed_extensions = ["wav", "mp3", "m4a", "flac", "ogg", "mp4", "mov", "avi", "mkv"]
 default_language = "ja"
 timeline_update_interval_ms = 200
+upload_prompt_text = "音声ファイルをドラッグ&ドロップするか、クリックして選択してください"
+upload_success_text = "{filename} を選択しました"
