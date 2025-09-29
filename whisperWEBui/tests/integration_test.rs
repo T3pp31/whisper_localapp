@@ -101,6 +101,21 @@ async fn test_config_validation() {
 
     config.webui.stats_average_processing_time_label = "平均処理時間 (1分音声あたり)".to_string();
     assert!(config.validate().is_ok());
+
+    config.realtime.enabled = true;
+    config.realtime.config_dir = None;
+    assert!(config.validate().is_err());
+
+    config.realtime.config_dir = Some("../WhisperRealtimeAPI/config".to_string());
+    config.realtime.default_client_type = Some("browser".to_string());
+    config.realtime.default_client_name = Some("Chrome".to_string());
+    config.realtime.default_client_version = Some("120".to_string());
+    config.realtime.default_token_subject = Some("tester".to_string());
+    config.realtime.heartbeat_interval_ms = 0;
+    assert!(config.validate().is_err());
+
+    config.realtime.heartbeat_interval_ms = 1_000;
+    assert!(config.validate().is_ok());
 }
 
 #[tokio::test]
@@ -155,8 +170,8 @@ async fn test_index_contains_language_and_timeline_config() {
         .unwrap();
     let html = String::from_utf8(body.to_vec()).unwrap();
 
-    assert!(html.contains("data-default-language=\"ja\""));
-    assert!(html.contains("data-timeline-update-ms=\"250\""));
+    assert!(html.contains(r#"data-default-language="ja""#));
+    assert!(html.contains(r#"data-timeline-update-ms="250""#));
 }
 
 #[tokio::test]
@@ -175,8 +190,8 @@ async fn test_index_contains_transcribe_button() {
         .unwrap();
     let html = String::from_utf8(body.to_vec()).unwrap();
 
-    assert!(html.contains("id=\"transcribe-btn\""));
-    assert!(html.contains("data-loading-label=\"文字起こし中...\""));
+    assert!(html.contains(r#"id="transcribe-btn""#));
+    assert!(html.contains(r#"data-loading-label="文字起こし中...""#));
 }
 
 #[tokio::test]
@@ -198,11 +213,11 @@ async fn test_index_contains_upload_ui_configuration() {
         .unwrap();
     let html = String::from_utf8(body.to_vec()).unwrap();
 
-    assert!(html.contains("id=\"upload-text\""));
-    assert!(html.contains("data-default-text=\"ドラッグ&amp;ドロップまたはクリックで選択\""));
-    assert!(html.contains("data-success-text=\"✓ {filename} を準備しました\""));
-    assert!(html.contains("id=\"upload-preview\""));
-    assert!(html.contains("id=\"upload-audio-preview\""));
+    assert!(html.contains(r#"id="upload-text""#));
+    assert!(html.contains(r#"data-default-text="ドラッグ&amp;ドロップまたはクリックで選択""#));
+    assert!(html.contains(r#"data-success-text="✓ {filename} を準備しました""#));
+    assert!(html.contains(r#"id="upload-preview""#));
+    assert!(html.contains(r#"id="upload-audio-preview""#));
 }
 
 #[tokio::test]
@@ -226,9 +241,126 @@ async fn test_index_contains_stats_average_processing_config() {
     let html = String::from_utf8(body.to_vec()).unwrap();
 
     assert!(html.contains(
-        "data-stats-average-processing-time-label=\"平均処理時間 (音声1分あたりの所要時間)\""
+        r#"data-stats-average-processing-time-label="平均処理時間 (音声1分あたりの所要時間)""#
     ));
-    assert!(html.contains(
-        "data-stats-average-processing-time-unit=\"秒 / 音声1分\""
-    ));
+    assert!(html.contains(r#"data-stats-average-processing-time-unit="秒 / 音声1分""#));
+}
+
+#[tokio::test]
+async fn test_index_contains_realtime_tab_attributes() {
+    let mut config = Config::default();
+    config.realtime.enabled = true;
+    config.realtime.config_dir = Some("../WhisperRealtimeAPI/config".to_string());
+    config.realtime.default_client_type = Some("browser".to_string());
+    config.realtime.default_client_name = Some("Chrome".to_string());
+    config.realtime.default_client_version = Some("120".to_string());
+    config.realtime.default_token_subject = Some("demo-user".to_string());
+    config.realtime.heartbeat_interval_ms = 15000;
+
+    let app_state = AppState::new(config);
+    let app = whisper_webui::create_app(app_state);
+
+    let request = Request::builder().uri("/").body(Body::empty()).unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let html = String::from_utf8(body.to_vec()).unwrap();
+
+    assert!(html.contains(r#"data-realtime-enabled="true""#));
+    assert!(html.contains(r#"data-realtime-client-type="browser""#));
+    assert!(html.contains(r#"data-realtime-token-subject="demo-user""#));
+    assert!(html.contains(r#"id="panel-realtime""#));
+    assert!(html.contains(r#"data-tab="realtime""#));
+}
+
+#[tokio::test]
+async fn test_realtime_config_disabled() {
+    let config = Config::default();
+    let app_state = AppState::new(config);
+    let app = whisper_webui::create_app(app_state);
+
+    let request = Request::builder()
+        .uri("/api/realtime/config")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json.get("success"), Some(&Value::Bool(true)));
+    assert_eq!(json["data"].get("enabled"), Some(&Value::Bool(false)));
+}
+
+#[tokio::test]
+async fn test_realtime_config_enabled() {
+    let mut config = Config::default();
+    config.realtime.enabled = true;
+    config.realtime.config_dir = Some("../WhisperRealtimeAPI/config".to_string());
+    config.realtime.default_client_type = Some("browser".to_string());
+    config.realtime.default_client_name = Some("Chrome".to_string());
+    config.realtime.default_client_version = Some("120".to_string());
+    config.realtime.default_token_subject = Some("demo-user".to_string());
+
+    let app_state = AppState::new(config);
+    let app = whisper_webui::create_app(app_state);
+
+    let request = Request::builder()
+        .uri("/api/realtime/config")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json.get("success"), Some(&Value::Bool(true)));
+    assert_eq!(json["data"].get("enabled"), Some(&Value::Bool(true)));
+    assert!(json["data"]["ice_servers"]
+        .as_array()
+        .map(|v| !v.is_empty())
+        .unwrap_or(false));
+}
+
+#[tokio::test]
+async fn test_realtime_session_start_returns_error_when_disabled() {
+    let config = Config::default();
+    let app_state = AppState::new(config);
+    let app = whisper_webui::create_app(app_state);
+
+    let payload = serde_json::json!({
+        "client_type": "browser",
+        "client_name": "Chrome",
+        "client_version": "120",
+        "token_subject": "tester",
+        "retry": false
+    });
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/realtime/session")
+        .header("content-type", "application/json")
+        .body(Body::from(payload.to_string()))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json.get("success"), Some(&Value::Bool(false)));
 }

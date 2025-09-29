@@ -5,7 +5,7 @@ pub mod handlers;
 use crate::handlers::AppState;
 use axum::{
     extract::DefaultBodyLimit,
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use tower::ServiceBuilder;
@@ -31,6 +31,19 @@ pub fn create_app(app_state: AppState) -> Router {
         .route("/api/models", get(handlers::backend_models))
         .route("/api/languages", get(handlers::backend_languages))
         .route("/api/gpu-status", get(handlers::backend_gpu_status))
+        .route("/api/realtime/config", get(handlers::realtime_config))
+        .route(
+            "/api/realtime/session",
+            post(handlers::realtime_start_session),
+        )
+        .route(
+            "/api/realtime/session/{id}/heartbeat",
+            post(handlers::realtime_heartbeat),
+        )
+        .route(
+            "/api/realtime/session/{id}",
+            delete(handlers::realtime_end_session),
+        )
         .nest_service("/static", ServeDir::new("static"))
         .layer(
             ServiceBuilder::new()

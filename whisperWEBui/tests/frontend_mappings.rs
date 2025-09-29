@@ -1,9 +1,5 @@
 use whisper_webui::client::{GpuModelInfo, GpuStatusResponse, HealthResponse, StatsResponse};
-use whisper_webui::handlers::{
-    map_gpu_status_response,
-    map_health_response,
-    map_stats_response,
-};
+use whisper_webui::handlers::{map_gpu_status_response, map_health_response, map_stats_response};
 
 #[test]
 fn map_health_response_converts_fields() {

@@ -17,3 +17,12 @@ upload_prompt_text = "音声ファイルをドラッグ&ドロップするか、
 upload_success_text = "{filename} を選択しました"
 stats_average_processing_time_label = "平均処理時間 (音声1分あたりの文字起こし所要時間)"
 stats_average_processing_time_unit = "秒 / 音声1分"
+
+[realtime]
+enabled = true
+config_dir = "../WhisperRealtimeAPI/config"
+default_client_type = "browser"
+default_client_name = "Chrome"
+default_client_version = "130"
+default_token_subject = "web-demo"
+heartbeat_interval_ms = 30000
