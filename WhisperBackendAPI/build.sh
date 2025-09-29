@@ -5,6 +5,31 @@
 
 set -e
 
+BUILD_CONFIG_FILE="build_config.toml"
+
+load_build_config() {
+  # build_config.toml から NVCC 向けフラグを読み取り、環境変数に反映
+  if [ ! -f "$BUILD_CONFIG_FILE" ]; then
+    return
+  fi
+
+  local configured_flags
+  configured_flags=$(sed -n 's/^[[:space:]]*nvcc_prepend_flags[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$BUILD_CONFIG_FILE" | head -n1)
+
+  if [ -z "$configured_flags" ]; then
+    return
+  fi
+
+  if [ -n "${NVCC_PREPEND_FLAGS:-}" ]; then
+    NVCC_PREPEND_FLAGS="${NVCC_PREPEND_FLAGS} ${configured_flags}"
+  else
+    NVCC_PREPEND_FLAGS="$configured_flags"
+  fi
+
+  export NVCC_PREPEND_FLAGS
+  echo "✓ build_config.toml から NVCC_PREPEND_FLAGS を適用: ${NVCC_PREPEND_FLAGS}"
+}
+
 echo "=== WhisperBackendAPI ビルドスクリプト ==="
 echo
 
@@ -111,6 +136,7 @@ if [ "$BUILD_TYPE" = "gpu" ]; then
 
   # 追加セットアップ
   setup_host_compiler
+  load_build_config
   setup_bindgen_clang_args
 
   echo "📦 ビルド前にクリーンします（構成切替の取りこぼし防止）..."

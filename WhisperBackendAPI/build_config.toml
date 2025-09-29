@@ -1,0 +1,2 @@
+[build.cuda]
+nvcc_prepend_flags = "-U_GNU_SOURCE"
