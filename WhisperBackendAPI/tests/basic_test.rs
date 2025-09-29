@@ -81,7 +81,7 @@ mod basic_tests {
 
         // リクエスト記録
         stats.record_request();
-        stats.record_success(1500);
+        stats.record_success(1500, Some(60_000));
 
         assert_eq!(stats.total_requests, 1);
         assert_eq!(stats.successful_transcriptions, 1);
@@ -154,7 +154,7 @@ mod basic_tests {
         // ServerStats
         let mut stats = ServerStats::default();
         stats.record_request();
-        stats.record_success(1500);
+        stats.record_success(1500, Some(60_000));
         let json = serde_json::to_string(&stats).unwrap();
         let deserialized: ServerStats = serde_json::from_str(&json).unwrap();
         assert_eq!(stats.total_requests, deserialized.total_requests);

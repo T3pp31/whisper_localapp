@@ -62,7 +62,7 @@ mod mock_tests {
 
         // リクエスト記録
         stats.record_request();
-        stats.record_success(1500);
+        stats.record_success(1500, Some(60_000));
         assert_eq!(stats.total_requests, 1);
         assert_eq!(stats.successful_transcriptions, 1);
         assert_eq!(stats.average_processing_time_ms, 1500.0);

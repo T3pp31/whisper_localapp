@@ -170,6 +170,7 @@ mod models_tests {
             assert_eq!(stats.successful_transcriptions, 0);
             assert_eq!(stats.failed_transcriptions, 0);
             assert_eq!(stats.total_processing_time_ms, 0);
+            assert_eq!(stats.total_audio_duration_ms, 0);
             assert_eq!(stats.average_processing_time_ms, 0.0);
             assert_eq!(stats.active_requests, 0);
             assert_eq!(stats.uptime_seconds, 0);
@@ -193,20 +194,35 @@ mod models_tests {
             let mut stats = ServerStats::default();
             stats.record_request();
 
-            stats.record_success(1000);
+            stats.record_success(1000, Some(60_000));
 
             assert_eq!(stats.successful_transcriptions, 1);
             assert_eq!(stats.active_requests, 0); // デクリメントされる
             assert_eq!(stats.total_processing_time_ms, 1000);
+            assert_eq!(stats.total_audio_duration_ms, 60_000);
             assert_eq!(stats.average_processing_time_ms, 1000.0);
 
             // 2回目の成功を記録
             stats.record_request();
-            stats.record_success(2000);
+            stats.record_success(2000, Some(60_000));
 
             assert_eq!(stats.successful_transcriptions, 2);
             assert_eq!(stats.total_processing_time_ms, 3000);
+            assert_eq!(stats.total_audio_duration_ms, 120_000);
             assert_eq!(stats.average_processing_time_ms, 1500.0); // (1000 + 2000) / 2
+        }
+
+        #[test]
+        fn test_average_processing_time_per_minute_scaling() {
+            let mut stats = ServerStats::default();
+            stats.record_request();
+            stats.record_success(500, Some(30_000));
+            assert!((stats.average_processing_time_ms - 1000.0).abs() < 1e-6);
+
+            stats.record_request();
+            stats.record_success(1000, Some(120_000));
+            assert!((stats.average_processing_time_ms - 600.0).abs() < 1e-6);
+            assert_eq!(stats.total_audio_duration_ms, 150_000);
         }
 
         #[test]
@@ -245,7 +261,7 @@ mod models_tests {
 
             // 100%成功の場合
             stats.record_request();
-            stats.record_success(1000);
+            stats.record_success(1000, Some(60_000));
             assert_eq!(stats.success_rate(), 100.0);
 
             // 50%成功の場合
@@ -276,13 +292,14 @@ mod models_tests {
         fn test_stats_clone() {
             let mut original = ServerStats::default();
             original.record_request();
-            original.record_success(5000);
+            original.record_success(5000, Some(60_000));
 
             let cloned = original.clone();
 
             assert_eq!(cloned.total_requests, original.total_requests);
             assert_eq!(cloned.successful_transcriptions, original.successful_transcriptions);
             assert_eq!(cloned.total_processing_time_ms, original.total_processing_time_ms);
+            assert_eq!(cloned.total_audio_duration_ms, original.total_audio_duration_ms);
             assert_eq!(cloned.average_processing_time_ms, original.average_processing_time_ms);
         }
     }
@@ -578,13 +595,15 @@ mod models_tests {
         fn test_server_stats_json_serialization() {
             let mut stats = ServerStats::default();
             stats.record_request();
-            stats.record_success(1500);
+            stats.record_success(1500, Some(60_000));
 
             let json = serde_json::to_string(&stats).unwrap();
             let deserialized: ServerStats = serde_json::from_str(&json).unwrap();
 
             assert_eq!(stats.total_requests, deserialized.total_requests);
             assert_eq!(stats.successful_transcriptions, deserialized.successful_transcriptions);
+            assert_eq!(stats.total_processing_time_ms, deserialized.total_processing_time_ms);
+            assert_eq!(stats.total_audio_duration_ms, deserialized.total_audio_duration_ms);
             assert_eq!(stats.average_processing_time_ms, deserialized.average_processing_time_ms);
         }
 

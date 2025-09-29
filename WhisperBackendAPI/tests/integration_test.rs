@@ -184,7 +184,7 @@ mod integration_tests {
         {
             let mut stats = app_state.stats.lock().unwrap();
             stats.record_request();
-            stats.record_success(1500);
+            stats.record_success(1500, Some(60_000));
         }
 
         let app = create_test_router(app_state);
@@ -372,7 +372,7 @@ mod integration_tests {
             let mut stats = app_state.stats.lock().unwrap();
             stats.record_request();
             stats.record_request();
-            stats.record_success(1000);
+            stats.record_success(1000, Some(60_000));
             stats.record_failure();
         }
 
@@ -504,7 +504,7 @@ mod integration_tests {
         {
             let mut stats = app_state.stats.lock().unwrap();
             stats.record_request();
-            stats.record_success(2000);
+            stats.record_success(2000, Some(60_000));
         }
 
         // 変更が反映されていることを確認

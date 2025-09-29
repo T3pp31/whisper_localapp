@@ -272,6 +272,7 @@ pub struct ServerStats {
     pub successful_transcriptions: u64,
     pub failed_transcriptions: u64,
     pub total_processing_time_ms: u64,
+    pub total_audio_duration_ms: u64,
     pub average_processing_time_ms: f64,
     pub active_requests: usize,
     pub uptime_seconds: u64,
@@ -284,6 +285,7 @@ impl Default for ServerStats {
             successful_transcriptions: 0,
             failed_transcriptions: 0,
             total_processing_time_ms: 0,
+            total_audio_duration_ms: 0,
             average_processing_time_ms: 0.0,
             active_requests: 0,
             uptime_seconds: 0,
@@ -297,14 +299,20 @@ impl ServerStats {
         self.active_requests += 1;
     }
 
-    pub fn record_success(&mut self, processing_time_ms: u64) {
+    pub fn record_success(&mut self, processing_time_ms: u64, audio_duration_ms: Option<u64>) {
         self.successful_transcriptions += 1;
         self.active_requests = self.active_requests.saturating_sub(1);
-        self.total_processing_time_ms += processing_time_ms;
+        self.total_processing_time_ms = self.total_processing_time_ms.saturating_add(processing_time_ms);
 
-        if self.successful_transcriptions > 0 {
-            self.average_processing_time_ms =
-                self.total_processing_time_ms as f64 / self.successful_transcriptions as f64;
+        if let Some(duration_ms) = audio_duration_ms {
+            self.total_audio_duration_ms = self.total_audio_duration_ms.saturating_add(duration_ms);
+        }
+
+        if self.total_audio_duration_ms > 0 {
+            let processing_per_ms = self.total_processing_time_ms as f64 / self.total_audio_duration_ms as f64;
+            self.average_processing_time_ms = processing_per_ms * 60_000.0;
+        } else {
+            self.average_processing_time_ms = 0.0;
         }
     }
 

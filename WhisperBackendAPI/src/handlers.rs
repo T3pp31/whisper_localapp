@@ -155,7 +155,7 @@ pub async fn transcribe_basic(
     match &result {
         Ok(response) => {
             let mut stats = state.stats.lock().unwrap();
-            stats.record_success(response.processing_time_ms);
+            stats.record_success(response.processing_time_ms, response.duration_ms);
         }
         Err(_) => {
             let mut stats = state.stats.lock().unwrap();
@@ -236,10 +236,13 @@ pub async fn transcribe_with_timestamps(
     // 統計情報を更新しつつ、セグメントのみ返却
     match result {
         Ok(axum::response::Json(resp)) => {
-            let mut stats = state.stats.lock().unwrap();
-            stats.record_success(resp.processing_time_ms);
-
+            let processing_time_ms = resp.processing_time_ms;
+            let duration_ms = resp.duration_ms;
             let segments = resp.segments.unwrap_or_default();
+
+            let mut stats = state.stats.lock().unwrap();
+            stats.record_success(processing_time_ms, duration_ms);
+
             Ok(Json(segments))
         }
         Err(e) => {

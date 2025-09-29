@@ -1,0 +1,15 @@
+# WhisperBackendAPI 概要
+- **目的**: whisper-rs (whisper.cpp) を利用したローカル音声文字起こしバックエンド。Axum ベースの REST API を提供し、CUDA/OpenCL による GPU アクセラレーションにも対応。
+- **主な技術**: Rust 2021, Axum, Tokio, whisper-rs, Symphonia, Rubato, Serde, Tower/Tower-HTTP, anyhow。
+- **構成**:
+  - `src/main.rs`: Axum サーバー起動、ルーティング、CORS/ミドルウェア、WhisperEngine 初期化。
+  - `src/config.rs`: TOML 設定のモデル／読み書き／検証ロジック。
+  - `src/handlers.rs`: API ハンドラ（transcribe, stats, gpu-status など）と AppState。
+  - `src/whisper.rs`: WhisperEngine ラッパー、GPU 初期化、推論処理。
+  - `src/audio.rs`: 音声デコード／前処理、フォーマット検証。
+  - `src/models.rs`: モデルメタデータ、レスポンス構造体。
+  - `src/lib.rs`: 主要モジュールの公開。
+  - `config.toml`: 実行時設定（サーバー/GPU/パス/制限など）。
+  - `build.sh`, `run.sh`, `test_all.sh`, `test_gpu.sh`: ビルド・起動・テスト支援スクリプト。
+  - `tests/`: 単体テスト、統合テスト、GPU テスト等を Rust の統合テストとして配置。
+- **補足**: `models/`, `temp/`, `uploads/` ディレクトリもリポジトリ内に存在。

@@ -297,7 +297,7 @@ mod handlers_tests {
             {
                 let mut stats = app_state.stats.lock().unwrap();
                 stats.record_request();
-                stats.record_success(1500);
+                stats.record_success(1500, Some(60_000));
             }
 
             let stats = app_state.stats.lock().unwrap();
@@ -317,7 +317,7 @@ mod handlers_tests {
                 let mut stats = app_state.stats.lock().unwrap();
                 // 2回リクエスト、1回成功、1回失敗
                 stats.record_request();
-                stats.record_success(1000);
+                stats.record_success(1000, Some(60_000));
 
                 stats.record_request();
                 stats.record_failure();
