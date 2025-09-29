@@ -1,6 +1,39 @@
 [package]
-name = "whisperWEBui"
+name = "whisper-webui"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
+# Web framework and async runtime
+axum = { version = "0.8", features = ["multipart"] }
+tokio = { version = "1.0", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# HTTP client for backend communication
+reqwest = { version = "0.11", features = ["json", "multipart"] }
+
+
+# Static file serving
+tower = { version = "0.4", features = ["full"] }
+tower-http = { version = "0.5", features = ["fs", "cors", "trace"] }
+
+# Configuration
+toml = "0.8"
+
+# Error handling
+anyhow = "1.0"
+
+# Logging
+env_logger = "0.11"
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["serde"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
