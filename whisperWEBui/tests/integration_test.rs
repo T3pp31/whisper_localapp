@@ -85,6 +85,10 @@ async fn test_config_validation() {
     config.backend.base_url = "http://localhost:8000".to_string();
     config.webui.max_file_size_mb = 0;
     assert!(config.validate().is_err());
+
+    config.webui.max_file_size_mb = 100;
+    config.webui.timeline_update_interval_ms = 0;
+    assert!(config.validate().is_err());
 }
 
 #[tokio::test]
@@ -118,4 +122,30 @@ async fn test_server_address_format() {
     let config = Config::default();
     let expected_address = format!("{}:{}", config.server.host, config.server.port);
     assert_eq!(config.server_address(), expected_address);
+}
+
+#[tokio::test]
+async fn test_index_contains_language_and_timeline_config() {
+    let mut config = Config::default();
+    config.webui.default_language = Some("ja".to_string());
+    config.webui.timeline_update_interval_ms = 250;
+
+    let app_state = AppState::new(config);
+    let app = whisper_webui::create_app(app_state);
+
+    let request = Request::builder()
+        .uri("/")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let html = String::from_utf8(body.to_vec()).unwrap();
+
+    assert!(html.contains("data-default-language=\"ja\""));
+    assert!(html.contains("data-timeline-update-ms=\"250\""));
 }

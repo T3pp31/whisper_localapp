@@ -11,3 +11,5 @@ timeout_seconds = 300
 title = "Whisper WebUI"
 max_file_size_mb = 100
 allowed_extensions = ["wav", "mp3", "m4a", "flac", "ogg", "mp4", "mov", "avi", "mkv"]
+default_language = "ja"
+timeline_update_interval_ms = 200

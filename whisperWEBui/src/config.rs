@@ -34,6 +34,16 @@ pub struct WebUIConfig {
     pub title: String,
     pub max_file_size_mb: u64,
     pub allowed_extensions: Vec<String>,
+    #[serde(default)]
+    pub default_language: Option<String>,
+    #[serde(default = "WebUIConfig::default_timeline_update_interval_ms")]
+    pub timeline_update_interval_ms: u64,
+}
+
+impl WebUIConfig {
+    const fn default_timeline_update_interval_ms() -> u64 {
+        200
+    }
 }
 
 impl Config {
@@ -73,6 +83,10 @@ impl Config {
 
         if self.webui.max_file_size_mb == 0 {
             return Err(anyhow::anyhow!("最大ファイルサイズが無効です"));
+        }
+
+        if self.webui.timeline_update_interval_ms == 0 {
+            return Err(anyhow::anyhow!("タイムライン更新間隔が無効です"));
         }
 
         Ok(())
@@ -123,6 +137,8 @@ impl Default for Config {
                     "avi".to_string(),
                     "mkv".to_string(),
                 ],
+                default_language: None,
+                timeline_update_interval_ms: WebUIConfig::default_timeline_update_interval_ms(),
             },
         }
     }

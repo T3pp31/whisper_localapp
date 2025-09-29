@@ -53,6 +53,13 @@ pub async fn index(State(state): State<AppState>) -> Html<String> {
         .map(|ext| format!(".{}", ext))
         .collect::<Vec<_>>()
         .join(",");
+    let default_language = state
+        .config
+        .webui
+        .default_language
+        .clone()
+        .unwrap_or_default();
+    let timeline_update_ms = state.config.webui.timeline_update_interval_ms;
 
     let html = format!(r#"
 <!DOCTYPE html>
@@ -64,6 +71,7 @@ pub async fn index(State(state): State<AppState>) -> Html<String> {
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
+    <div id="app-config" data-default-language="{}" data-timeline-update-ms="{}" style="display: none;"></div>
     <div class="container">
         <header>
             <h1>{}</h1>
@@ -133,6 +141,16 @@ pub async fn index(State(state): State<AppState>) -> Html<String> {
                 </div>
 
                 <div class="results-content">
+                    <div class="audio-player" id="audio-player-container" style="display: none;">
+                        <audio id="audio-player" controls></audio>
+                        <div class="timeline-container" id="timeline-container">
+                            <div class="timeline" id="timeline">
+                                <div class="timeline-progress" id="timeline-progress"></div>
+                                <div class="timeline-segments" id="timeline-segments"></div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="result-info">
                         <span class="info-item">処理時間: <span id="processing-time">-</span>秒</span>
                         <span class="info-item">音声長: <span id="audio-duration">-</span>秒</span>
@@ -173,6 +191,8 @@ pub async fn index(State(state): State<AppState>) -> Html<String> {
 </html>
 "#,
         state.config.webui.title,
+        default_language,
+        timeline_update_ms,
         state.config.webui.title,
         allowed_exts,
         state.config.webui.max_file_size_mb,
