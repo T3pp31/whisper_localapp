@@ -64,6 +64,24 @@ RUST_LOG=info cargo run
 - 受信(部分結果): `{ "type": "partial_transcript", "session_id": "<id>", "text": "...", "confidence": 0.92 }`
 - 受信(最終結果): `{ "type": "final_transcript", "session_id": "<id>", "text": "..." }`
 
+### 5. run.sh での起動とポート競合対策
+
+同梱の `run.sh` は ASR gRPC サーバとバックエンド（WebSocket）を同時に起動します。
+
+```bash
+# 既定の設定ディレクトリ(config/)を使う
+./run.sh
+
+# 別ディレクトリの設定を使う
+WHISPER_REALTIME_CONFIG_DIR=/path/to/config ./run.sh
+
+# ポートを一時的に上書き（YAMLより優先）
+ASR_GRPC_BIND_ADDR=127.0.0.1:50052 WS_BIND_ADDR=127.0.0.1:8082 ./run.sh
+```
+
+run.sh は起動前にポートの使用状況をチェックし、既に使われている場合は起動を中止してエラーメッセージを表示します。
+別サーバや他プロセスと競合する場合は、上記の環境変数でポートを切り替えるか、`config/server.yaml` を変更してください。
+
 ## テスト
 
 ```bash
