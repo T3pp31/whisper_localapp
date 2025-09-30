@@ -375,7 +375,17 @@ pub async fn index(State(state): State<AppState>) -> Html<String> {
                                 <div class="upload-preview" id="upload-preview" style="display: none;">
                                     <audio id="upload-audio-preview" controls></audio>
                                 </div>
-                                <input type="file" id="file-input" accept="{accept_types}" hidden>
+                                <!--
+                                    互換性のため、hidden属性での非表示クリックは避け、
+                                    透明オーバーレイのfile inputでクリック/ドロップの両方を拾う
+                                -->
+                                <input
+                                    type="file"
+                                    id="file-input"
+                                    class="file-input-overlay"
+                                    accept="{accept_types}"
+                                    aria-label="音声ファイルを選択"
+                                >
                             </div>
                             <div class="upload-progress" id="upload-progress" style="display: none;">
                                 <div class="progress-bar">
