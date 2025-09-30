@@ -72,6 +72,45 @@ class WhisperWebUI {
         this.activateTab(this.activeTab);
     }
 
+    setupTabInterface() {
+        this.tabButtons.forEach((button) => {
+            button.addEventListener('click', () => {
+                const tabName = button.dataset.tab;
+                if (tabName) {
+                    this.activateTab(tabName);
+                }
+            });
+        });
+    }
+
+    activateTab(tabName) {
+        this.activeTab = tabName;
+
+        this.tabButtons.forEach((button) => {
+            if (button.dataset.tab === tabName) {
+                button.classList.add('active');
+                button.setAttribute('aria-selected', 'true');
+            } else {
+                button.classList.remove('active');
+                button.setAttribute('aria-selected', 'false');
+            }
+        });
+
+        this.tabPanels.forEach((panel, panelName) => {
+            if (panelName === tabName) {
+                panel.classList.add('active');
+            } else {
+                panel.classList.remove('active');
+            }
+        });
+
+        if (tabName === 'realtime' && this.realtimeUI) {
+            this.realtimeUI.onActivate();
+        } else if (this.realtimeUI) {
+            this.realtimeUI.onDeactivate();
+        }
+    }
+
     setupEventListeners() {
         if (this.uploadArea) {
             this.uploadArea.addEventListener('click', () => this.fileInput?.click());
