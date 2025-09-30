@@ -22,6 +22,8 @@ stats_average_processing_time_unit = "秒 / 音声1分"
 [realtime]
 enabled = true
 config_dir = "../WhisperRealtimeAPI/config"
+backend_ws_url = "ws://127.0.0.1:8081"
+connection_timeout_seconds = 10
 default_client_type = "browser"
 default_client_name = "Chrome"
 default_client_version = "130"

@@ -31,6 +31,10 @@ pub struct RealtimeConfig {
     pub enabled: bool,
     #[serde(default)]
     pub config_dir: Option<String>,
+    #[serde(default = "RealtimeConfig::default_backend_ws_url")]
+    pub backend_ws_url: String,
+    #[serde(default = "RealtimeConfig::default_connection_timeout_seconds")]
+    pub connection_timeout_seconds: u64,
     #[serde(default)]
     pub default_client_type: Option<String>,
     #[serde(default)]
@@ -75,6 +79,14 @@ impl RealtimeConfig {
         30_000
     }
 
+    fn default_backend_ws_url() -> String {
+        "ws://127.0.0.1:8081".to_string()
+    }
+
+    const fn default_connection_timeout_seconds() -> u64 {
+        10
+    }
+
     pub fn config_dir_path(&self) -> Option<PathBuf> {
         self.config_dir
             .as_ref()
@@ -87,6 +99,8 @@ impl Default for RealtimeConfig {
         Self {
             enabled: false,
             config_dir: None,
+            backend_ws_url: Self::default_backend_ws_url(),
+            connection_timeout_seconds: Self::default_connection_timeout_seconds(),
             default_client_type: None,
             default_client_name: None,
             default_client_version: None,

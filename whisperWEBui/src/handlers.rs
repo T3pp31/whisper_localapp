@@ -1007,7 +1007,7 @@ pub async fn websocket_handler(
 }
 
 async fn handle_websocket(
-    socket: axum::extract::ws::WebSocket,
+    mut socket: axum::extract::ws::WebSocket,
     session_id: String,
     state: AppState,
 ) {
@@ -1016,44 +1016,121 @@ async fn handle_websocket(
 
     log::info!("WebSocket接続確立: session_id={}", session_id);
 
-    let (mut sender, mut receiver) = socket.split();
+    // リアルタイムバックエンドが有効でない場合はエラーを返す
+    let realtime = match &state.realtime {
+        Some(rt) => rt,
+        None => {
+            log::error!("リアルタイムバックエンドが無効です: session_id={}", session_id);
+            let _ = socket.close().await;
+            return;
+        }
+    };
 
-    // 簡易的なエコーサーバー実装（実際はWebRTCシグナリングロジックを統合）
-    while let Some(msg) = receiver.next().await {
-        match msg {
-            Ok(Message::Text(text)) => {
-                log::debug!("受信メッセージ: {}", text);
+    // バックエンドWebSocketサーバーへの接続
+    let backend_ws_url = format!("{}/ws?session_id={}",
+        realtime.web_config.backend_ws_url.trim_end_matches('/'),
+        urlencoding::encode(&session_id)
+    );
 
-                // TODO: ここでWebRTCトランスポートと統合
-                // - Offerを受信 → Answerを生成
-                // - ICE Candidateを処理
+    log::debug!("バックエンド接続先: {}", backend_ws_url);
 
-                let response = serde_json::json!({
-                    "type": "ack",
-                    "session_id": session_id,
-                    "message": "received"
-                });
+    let backend_ws = match tokio::time::timeout(
+        std::time::Duration::from_secs(realtime.web_config.connection_timeout_seconds),
+        tokio_tungstenite::connect_async(&backend_ws_url),
+    )
+    .await
+    {
+        Ok(Ok((ws, _))) => ws,
+        Ok(Err(e)) => {
+            log::error!("バックエンドWebSocket接続失敗: {}, session_id={}", e, session_id);
+            let _ = socket.close().await;
+            return;
+        }
+        Err(_) => {
+            log::error!("バックエンドWebSocket接続タイムアウト: session_id={}", session_id);
+            let _ = socket.close().await;
+            return;
+        }
+    };
 
-                if sender
-                    .send(Message::Text(serde_json::to_string(&response).unwrap().into()))
-                    .await
-                    .is_err()
-                {
-                    log::warn!("WebSocket送信失敗: session_id={}", session_id);
+    log::info!("バックエンドWebSocket接続成功: session_id={}", session_id);
+
+    let (mut client_sender, mut client_receiver) = socket.split();
+    let (mut backend_sender, mut backend_receiver) = backend_ws.split();
+
+    // クライアント→バックエンド転送タスク
+    let session_id_c2b = session_id.clone();
+    let client_to_backend = tokio::spawn(async move {
+        while let Some(msg) = client_receiver.next().await {
+            match msg {
+                Ok(Message::Text(text)) => {
+                    log::debug!("クライアント→バックエンド: {}", text);
+
+                    // Axum WebSocketメッセージをtokio-tungsteniteメッセージに変換
+                    let backend_msg = tokio_tungstenite::tungstenite::Message::Text(text.to_string());
+                    if backend_sender.send(backend_msg).await.is_err() {
+                        log::warn!("バックエンド送信失敗: session_id={}", session_id_c2b);
+                        break;
+                    }
+                }
+                Ok(Message::Binary(data)) => {
+                    let backend_msg = tokio_tungstenite::tungstenite::Message::Binary(data.to_vec());
+                    if backend_sender.send(backend_msg).await.is_err() {
+                        log::warn!("バックエンド送信失敗（バイナリ）: session_id={}", session_id_c2b);
+                        break;
+                    }
+                }
+                Ok(Message::Close(_)) => {
+                    log::info!("クライアント切断: session_id={}", session_id_c2b);
+                    let _ = backend_sender.send(tokio_tungstenite::tungstenite::Message::Close(None)).await;
                     break;
                 }
+                Err(e) => {
+                    log::error!("クライアントエラー: {}, session_id={}", e, session_id_c2b);
+                    break;
+                }
+                _ => {}
             }
-            Ok(Message::Close(_)) => {
-                log::info!("WebSocket切断: session_id={}", session_id);
-                break;
-            }
-            Err(e) => {
-                log::error!("WebSocketエラー: {}, session_id={}", e, session_id);
-                break;
-            }
-            _ => {}
         }
-    }
+        log::debug!("クライアント→バックエンド転送終了: session_id={}", session_id_c2b);
+    });
+
+    // バックエンド→クライアント転送タスク
+    let session_id_b2c = session_id.clone();
+    let backend_to_client = tokio::spawn(async move {
+        while let Some(msg) = backend_receiver.next().await {
+            match msg {
+                Ok(tokio_tungstenite::tungstenite::Message::Text(text)) => {
+                    log::debug!("バックエンド→クライアント: {}", text);
+
+                    if client_sender.send(Message::Text(text.into())).await.is_err() {
+                        log::warn!("クライアント送信失敗: session_id={}", session_id_b2c);
+                        break;
+                    }
+                }
+                Ok(tokio_tungstenite::tungstenite::Message::Binary(data)) => {
+                    if client_sender.send(Message::Binary(data.into())).await.is_err() {
+                        log::warn!("クライアント送信失敗（バイナリ）: session_id={}", session_id_b2c);
+                        break;
+                    }
+                }
+                Ok(tokio_tungstenite::tungstenite::Message::Close(_)) => {
+                    log::info!("バックエンド切断: session_id={}", session_id_b2c);
+                    let _ = client_sender.close().await;
+                    break;
+                }
+                Err(e) => {
+                    log::error!("バックエンドエラー: {}, session_id={}", e, session_id_b2c);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        log::debug!("バックエンド→クライアント転送終了: session_id={}", session_id_b2c);
+    });
+
+    // 両方のタスクが完了するまで待機
+    let _ = tokio::join!(client_to_backend, backend_to_client);
 
     log::info!("WebSocket接続終了: session_id={}", session_id);
 }
