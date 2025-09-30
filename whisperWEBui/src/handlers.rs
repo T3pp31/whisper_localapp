@@ -151,6 +151,7 @@ pub struct FrontendHealth {
     pub status: String,
     pub version: Option<String>,
     pub whisper_loaded: bool,
+    pub model_name: Option<String>,
     pub uptime_seconds: u64,
     pub memory_usage_mb: Option<u64>,
 }
@@ -167,6 +168,14 @@ pub fn map_health_response(health: HealthResponse) -> FrontendHealth {
             }
         }),
         whisper_loaded: health.model_loaded,
+        model_name: health.model_name.and_then(|m| {
+            let trimmed = m.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }),
         uptime_seconds: health.uptime_seconds,
         memory_usage_mb: health.memory_usage_mb,
     }

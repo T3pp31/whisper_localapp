@@ -57,6 +57,7 @@ pub struct HealthResponse {
     pub status: String,
     pub version: String,
     pub model_loaded: bool,
+    pub model_name: Option<String>,
     pub uptime_seconds: u64,
     pub memory_usage_mb: Option<u64>,
 }

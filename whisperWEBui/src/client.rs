@@ -229,6 +229,8 @@ pub struct HealthResponse {
     #[serde(default)]
     pub model_loaded: bool,
     #[serde(default)]
+    pub model_name: Option<String>,
+    #[serde(default)]
     pub uptime_seconds: u64,
     #[serde(default)]
     pub memory_usage_mb: Option<u64>,

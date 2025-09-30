@@ -285,8 +285,13 @@ class WhisperWebUI {
                     `<div>ステータス: ${info.status || '不明'}</div>`,
                     `<div>稼働時間: ${hours}時間 ${minutes}分</div>`,
                     `<div>Whisperエンジン: ${info.whisper_loaded ? '読み込み済み' : '未読み込み'}</div>`,
-                    `<div>バージョン: ${versionText}</div>`,
                 ];
+
+                if (info.model_name) {
+                    parts.push(`<div>Whisperモデル: ${this.escapeHtml(info.model_name)}</div>`);
+                }
+
+                parts.push(`<div>バージョン: ${versionText}</div>`);
 
                 if (info.memory_usage_mb !== null && info.memory_usage_mb !== undefined) {
                     parts.push(`<div>メモリ使用量: ${info.memory_usage_mb}MB</div>`);
