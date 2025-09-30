@@ -43,7 +43,7 @@ WhisperBackendAPIを利用する音声文字起こしWebインターフェース
 
 ### 前提条件
 - Rust 1.70以上
-- WhisperBackendAPIが稼働中（デフォルト: http://127.0.0.1:8000）
+- WhisperBackendAPIが稼働中（デフォルト: http://127.0.0.1:8081）
 
 ### インストール
 
@@ -60,7 +60,7 @@ WhisperBackendAPIを利用する音声文字起こしWebインターフェース
    port = 3001
 
    [backend]
-   base_url = "http://127.0.0.1:8000"
+   base_url = "http://127.0.0.1:8081"
    timeout_seconds = 300
 
    [webui]

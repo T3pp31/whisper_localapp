@@ -2,6 +2,7 @@ mod asr;
 mod audio;
 mod error;
 mod monitoring;
+mod server;
 mod system;
 
 use std::fs;
@@ -13,6 +14,7 @@ pub use asr::*;
 pub use audio::*;
 pub use error::ConfigError;
 pub use monitoring::*;
+pub use server::*;
 pub use system::*;
 
 pub const CONFIG_DIR_ENV: &str = "WHISPER_REALTIME_CONFIG_DIR";
@@ -23,6 +25,7 @@ pub struct ConfigSet {
     pub audio: AudioProcessingConfig,
     pub asr: AsrPipelineConfig,
     pub monitoring: MonitoringConfig,
+    pub server: ServerConfig,
     root: PathBuf,
 }
 
@@ -37,12 +40,14 @@ impl ConfigSet {
         let audio = load_yaml(root.join("audio_processing.yaml"))?;
         let asr = load_yaml(root.join("asr_pipeline.yaml"))?;
         let monitoring = load_yaml(root.join("monitoring.yaml"))?;
+        let server = load_yaml(root.join("server.yaml"))?;
 
         Ok(Self {
             system,
             audio,
             asr,
             monitoring,
+            server,
             root,
         })
     }

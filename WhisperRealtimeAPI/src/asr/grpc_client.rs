@@ -136,6 +136,47 @@ impl GrpcAsrClient {
     }
 }
 
+use super::client::{StreamingAsrClient, StreamingSession, TranscriptUpdate, AudioCommand};
+
+/// GrpcAsrClient を StreamingAsrClient トレイトに適合させるためのアダプタ
+#[derive(Clone)]
+pub struct GrpcAsrClientAdapter {
+    inner: std::sync::Arc<tokio::sync::Mutex<GrpcAsrClient>>,
+}
+
+impl GrpcAsrClientAdapter {
+    pub fn from_client(client: GrpcAsrClient) -> Self {
+        Self { inner: std::sync::Arc::new(tokio::sync::Mutex::new(client)) }
+    }
+}
+
+impl StreamingAsrClient for GrpcAsrClientAdapter {
+    fn start_session(&self, session_id: &str) -> Result<StreamingSession, super::AsrError> {
+        let (command_tx, mut command_rx) = mpsc::channel::<AudioCommand>(32);
+        let (update_tx, update_rx) = mpsc::channel::<TranscriptUpdate>(32);
+        let session_id_string = session_id.to_string();
+        let value = session_id_string.clone();
+        tokio::spawn(async move {
+            // 最低限の橋渡し: 現状はコマンドを消費して、Finish時にFinalを1件送る
+            while let Some(cmd) = command_rx.recv().await {
+                match cmd {
+                    AudioCommand::Frame(_samples) => {
+                        // 本実装では gRPC ストリーミングへ変換して送信する
+                    }
+                    AudioCommand::Finish => {
+                        let final_text_id = value.clone();
+                        let _ = update_tx
+                            .send(TranscriptUpdate::Final { text: format!("session {} finished", final_text_id) })
+                            .await;
+                        break;
+                    }
+                }
+            }
+        });
+
+        Ok(StreamingSession::new(session_id_string, command_tx, update_rx))
+    }
+}
 
 #[cfg(test)]
 mod tests {

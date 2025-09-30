@@ -1,5 +1,18 @@
+use std::fs;
+use std::path::PathBuf;
+use whisper_webui::config::Config;
+
+#[test]
+fn test_load_config_from_file_with_backend_8081() {
+    // 一時ファイルパスを生成
+    let mut path = std::env::temp_dir();
+    let filename = format!("whisper_webui_config_{}.toml", uuid::Uuid::new_v4());
+    path.push(filename);
+
+    // 8081を指す設定ファイルを作成
+    let toml = r#"
 [server]
-host = "0.0.0.0"
+host = "127.0.0.1"
 port = 3001
 max_request_size_mb = 110
 
@@ -27,3 +40,16 @@ default_client_name = "Chrome"
 default_client_version = "130"
 default_token_subject = "web-demo"
 heartbeat_interval_ms = 30000
+"#;
+
+    fs::write(&path, toml).expect("設定ファイルの作成に失敗しました");
+
+    // 読み込み検証
+    let config = Config::load_or_create_default(&path).expect("設定ファイルの読み込みに失敗しました");
+    assert_eq!(config.backend.base_url, "http://127.0.0.1:8081");
+    assert_eq!(config.server.port, 3001);
+
+    // 片付け（ベストエフォート）
+    let _ = fs::remove_file(&path);
+}
+

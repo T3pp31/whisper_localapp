@@ -60,6 +60,8 @@ pub struct WebUIConfig {
     pub stats_average_processing_time_label: String,
     #[serde(default = "WebUIConfig::default_stats_average_processing_time_unit")]
     pub stats_average_processing_time_unit: String,
+    #[serde(default = "WebUIConfig::default_with_timestamps")]
+    pub default_with_timestamps: bool,
 }
 
 impl ServerConfig {
@@ -113,6 +115,10 @@ impl WebUIConfig {
 
     fn default_stats_average_processing_time_unit() -> String {
         "秒 / 音声1分".to_string()
+    }
+
+    const fn default_with_timestamps() -> bool {
+        true
     }
 }
 
@@ -256,11 +262,11 @@ impl Default for Config {
         Self {
             server: ServerConfig {
                 host: "127.0.0.1".to_string(),
-                port: 3000,
+                port: 3001,
                 max_request_size_mb: ServerConfig::default_max_request_size_mb(),
             },
             backend: BackendConfig {
-                base_url: "http://127.0.0.1:8000".to_string(),
+                base_url: "http://127.0.0.1:8081".to_string(),
                 timeout_seconds: 300,
             },
             webui: WebUIConfig {
@@ -285,6 +291,7 @@ impl Default for Config {
                     WebUIConfig::default_stats_average_processing_time_label(),
                 stats_average_processing_time_unit:
                     WebUIConfig::default_stats_average_processing_time_unit(),
+                default_with_timestamps: WebUIConfig::default_with_timestamps(),
             },
             realtime: RealtimeConfig::default(),
         }

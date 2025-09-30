@@ -32,6 +32,7 @@ pub enum SignalingMessage {
 }
 
 /// WebSocketシグナリングハンドラ
+#[derive(Clone)]
 pub struct WebSocketSignalingHandler {
     sessions: Arc<RwLock<HashMap<String, mpsc::Sender<SignalingMessage>>>>,
 }

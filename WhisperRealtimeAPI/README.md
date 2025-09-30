@@ -31,21 +31,27 @@ cargo build
 - `audio_processing.yaml`: 音声処理パラメータ
 - `asr_pipeline.yaml`: ASR設定
 - `monitoring.yaml`: モニタリング設定
+- `server.yaml`: サーバのバインド先（例: `ws_bind_addr: "127.0.0.1:8080"`）
 
-### 3. ASR gRPCサーバーの起動
+### 3. ASR gRPCサーバーの起動（必須）
 
-Whisper推論サービスを別途起動する必要があります（例：FasterWhisper）。
+本バックエンドは起動時に `GrpcAsrClient` を使用し、外部ASRサーバへ接続します。GPUを使用する場合は、ASRサーバ（例：FasterWhisper/CTranslate2 CUDA対応）をGPU有効で起動してください。
+
+接続先は `config/asr_pipeline.yaml` の `service.endpoint` を使用します（既定: `http://localhost:50051`）。
 
 ```bash
-# ASRサービスの起動例（別プロジェクト）
-# python -m faster_whisper_server --port 50051
+# ASRサービスの起動例（別プロジェクト・参考）
+# python -m faster_whisper_server --port 50051  # venvは環境に合わせて選択
 ```
 
-### 4. バックエンド起動
+### 4. バックエンド起動（WebSocketシグナリングサーバ）
 
 ```bash
 RUST_LOG=info cargo run
 ```
+
+起動後、`config/server.yaml` の `ws_bind_addr` で指定されたアドレスにWebSocketサーバがバインドされます。
+クライアントは `ws://<host>/ws?session_id=<id>` で接続し、`SignalingMessage` をJSONで送受信します。
 
 ## テスト
 

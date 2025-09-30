@@ -304,6 +304,11 @@ pub async fn index(State(state): State<AppState>) -> Html<String> {
     let upload_success_text = encode_html(&state.config.webui.upload_success_text);
     let stats_average_label = encode_html(&state.config.webui.stats_average_processing_time_label);
     let stats_average_unit = encode_html(&state.config.webui.stats_average_processing_time_unit);
+    let with_timestamps_checked = if state.config.webui.default_with_timestamps {
+        "checked"
+    } else {
+        ""
+    };
 
     let realtime_config = &state.config.realtime;
     let realtime_enabled_attr = if realtime_config.enabled {
@@ -414,7 +419,7 @@ pub async fn index(State(state): State<AppState>) -> Html<String> {
 
                             <div class="option-group">
                                 <label>
-                                    <input type="checkbox" id="with-timestamps">
+                                    <input type="checkbox" id="with-timestamps" {with_timestamps_checked}>
                                     タイムスタンプを含める
                                 </label>
                             </div>
@@ -569,6 +574,7 @@ pub async fn index(State(state): State<AppState>) -> Html<String> {
         allowed_exts = encode_html(&allowed_exts),
         max_size = state.config.webui.max_file_size_mb,
         accept_types = encode_html(&accept_types),
+        with_timestamps_checked = with_timestamps_checked,
     );
 
     Html(html)
@@ -581,7 +587,7 @@ pub async fn upload_file(
     let mut file_data: Option<Vec<u8>> = None;
     let mut filename: Option<String> = None;
     let mut language: Option<String> = None;
-    let mut with_timestamps: bool = false;
+    let mut with_timestamps: bool = state.config.webui.default_with_timestamps;
     let mut temperature: Option<f32> = None;
     let mut no_speech_threshold: Option<f32> = None;
 
