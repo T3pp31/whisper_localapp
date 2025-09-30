@@ -1,0 +1,15 @@
+input:
+  sample_rate_hz: 48000
+  channels: 2
+  frame_ms: 10
+target:
+  sample_rate_hz: 16000
+  channels: 1
+frame_assembler:
+  frame_duration_ms: 20
+  jitter_buffer_ms: 60
+normalization:
+  target_rms_db: -20.0
+  limiter_threshold_db: -1.0
+  attack_ms: 5
+  release_ms: 50

@@ -443,6 +443,13 @@ pub async fn health_check(State(state): State<AppState>) -> Json<HealthResponse>
         engine_guard.is_some()
     };
 
+    // 設定から現在のモデル名を取得
+    let model_name = if model_loaded {
+        Some(state.config.whisper.default_model.clone())
+    } else {
+        None
+    };
+
     // メモリ使用量の取得（簡易版）
     // - Linux: /proc/self/status から VmRSS を読み取る
     // - その他 OS は None
@@ -452,6 +459,7 @@ pub async fn health_check(State(state): State<AppState>) -> Json<HealthResponse>
         status: "healthy".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         model_loaded,
+        model_name,
         uptime_seconds,
         memory_usage_mb,
     })

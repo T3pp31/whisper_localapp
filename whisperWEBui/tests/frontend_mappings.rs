@@ -1,9 +1,5 @@
 use whisper_webui::client::{GpuModelInfo, GpuStatusResponse, HealthResponse, StatsResponse};
-use whisper_webui::handlers::{
-    map_gpu_status_response,
-    map_health_response,
-    map_stats_response,
-};
+use whisper_webui::handlers::{map_gpu_status_response, map_health_response, map_stats_response};
 
 #[test]
 fn map_health_response_converts_fields() {
@@ -11,6 +7,7 @@ fn map_health_response_converts_fields() {
         status: "healthy".to_string(),
         version: Some(" 1.0.0 ".to_string()),
         model_loaded: true,
+        model_name: Some("whisper-large".to_string()),
         uptime_seconds: 7_200,
         memory_usage_mb: Some(512),
     };

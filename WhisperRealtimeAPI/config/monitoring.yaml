@@ -1,0 +1,17 @@
+metrics:
+  exporter: "prometheus"
+  listen: "0.0.0.0:9898"
+  scrape_path: "/metrics"
+thresholds:
+  rtt_ms:
+    warn: 80
+    critical: 120
+  jitter_ms:
+    warn: 20
+    critical: 50
+  packet_loss_percent:
+    warn: 1.0
+    critical: 2.5
+  asr_latency_ms:
+    warn: 120
+    critical: 150

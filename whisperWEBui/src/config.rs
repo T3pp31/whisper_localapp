@@ -1,12 +1,14 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub server: ServerConfig,
     pub backend: BackendConfig,
     pub webui: WebUIConfig,
+    #[serde(default)]
+    pub realtime: RealtimeConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,10 +25,26 @@ pub struct BackendConfig {
     pub timeout_seconds: u64,
 }
 
-impl ServerConfig {
-    fn default_max_request_size_mb() -> u64 {
-        110
-    }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RealtimeConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub config_dir: Option<String>,
+    #[serde(default = "RealtimeConfig::default_backend_ws_url")]
+    pub backend_ws_url: String,
+    #[serde(default = "RealtimeConfig::default_connection_timeout_seconds")]
+    pub connection_timeout_seconds: u64,
+    #[serde(default)]
+    pub default_client_type: Option<String>,
+    #[serde(default)]
+    pub default_client_name: Option<String>,
+    #[serde(default)]
+    pub default_client_version: Option<String>,
+    #[serde(default)]
+    pub default_token_subject: Option<String>,
+    #[serde(default = "RealtimeConfig::default_heartbeat_interval_ms")]
+    pub heartbeat_interval_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +64,50 @@ pub struct WebUIConfig {
     pub stats_average_processing_time_label: String,
     #[serde(default = "WebUIConfig::default_stats_average_processing_time_unit")]
     pub stats_average_processing_time_unit: String,
+    #[serde(default = "WebUIConfig::default_with_timestamps")]
+    pub default_with_timestamps: bool,
+}
+
+impl ServerConfig {
+    const fn default_max_request_size_mb() -> u64 {
+        110
+    }
+}
+
+impl RealtimeConfig {
+    const fn default_heartbeat_interval_ms() -> u64 {
+        30_000
+    }
+
+    fn default_backend_ws_url() -> String {
+        "ws://127.0.0.1:8081".to_string()
+    }
+
+    const fn default_connection_timeout_seconds() -> u64 {
+        10
+    }
+
+    pub fn config_dir_path(&self) -> Option<PathBuf> {
+        self.config_dir
+            .as_ref()
+            .map(|value| Path::new(value).to_path_buf())
+    }
+}
+
+impl Default for RealtimeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            config_dir: None,
+            backend_ws_url: Self::default_backend_ws_url(),
+            connection_timeout_seconds: Self::default_connection_timeout_seconds(),
+            default_client_type: None,
+            default_client_name: None,
+            default_client_version: None,
+            default_token_subject: None,
+            heartbeat_interval_ms: Self::default_heartbeat_interval_ms(),
+        }
+    }
 }
 
 impl WebUIConfig {
@@ -67,6 +129,10 @@ impl WebUIConfig {
 
     fn default_stats_average_processing_time_unit() -> String {
         "秒 / 音声1分".to_string()
+    }
+
+    const fn default_with_timestamps() -> bool {
+        true
     }
 }
 
@@ -127,13 +193,62 @@ impl Config {
             ));
         }
 
-        if self.webui.stats_average_processing_time_label.trim().is_empty() {
+        if self
+            .webui
+            .stats_average_processing_time_label
+            .trim()
+            .is_empty()
+        {
             return Err(anyhow::anyhow!(
                 "平均処理時間表示ラベルが設定されていません"
             ));
         }
 
+        if self.realtime.enabled {
+            if self.realtime.heartbeat_interval_ms == 0 {
+                return Err(anyhow::anyhow!(
+                    "リアルタイム設定のハートビート間隔が無効です"
+                ));
+            }
+
+            if self
+                .realtime
+                .config_dir
+                .as_ref()
+                .map(|dir| dir.trim().is_empty())
+                .unwrap_or(true)
+            {
+                return Err(anyhow::anyhow!(
+                    "リアルタイム設定のconfig_dirが指定されていません"
+                ));
+            }
+
+            Self::validate_realtime_field(
+                &self.realtime.default_client_type,
+                "リアルタイム設定のデフォルトクライアント種別",
+            )?;
+            Self::validate_realtime_field(
+                &self.realtime.default_client_name,
+                "リアルタイム設定のデフォルトクライアント名",
+            )?;
+            Self::validate_realtime_field(
+                &self.realtime.default_client_version,
+                "リアルタイム設定のデフォルトクライアントバージョン",
+            )?;
+            Self::validate_realtime_field(
+                &self.realtime.default_token_subject,
+                "リアルタイム設定のデフォルトトークンサブジェクト",
+            )?;
+        }
+
         Ok(())
+    }
+
+    fn validate_realtime_field(value: &Option<String>, label: &str) -> anyhow::Result<()> {
+        match value {
+            Some(field) if !field.trim().is_empty() => Ok(()),
+            _ => Err(anyhow::anyhow!("{}が設定されていません", label)),
+        }
     }
 
     pub fn server_address(&self) -> String {
@@ -161,11 +276,11 @@ impl Default for Config {
         Self {
             server: ServerConfig {
                 host: "127.0.0.1".to_string(),
-                port: 3000,
+                port: 3001,
                 max_request_size_mb: ServerConfig::default_max_request_size_mb(),
             },
             backend: BackendConfig {
-                base_url: "http://127.0.0.1:8000".to_string(),
+                base_url: "http://127.0.0.1:8081".to_string(),
                 timeout_seconds: 300,
             },
             webui: WebUIConfig {
@@ -190,7 +305,9 @@ impl Default for Config {
                     WebUIConfig::default_stats_average_processing_time_label(),
                 stats_average_processing_time_unit:
                     WebUIConfig::default_stats_average_processing_time_unit(),
+                default_with_timestamps: WebUIConfig::default_with_timestamps(),
             },
+            realtime: RealtimeConfig::default(),
         }
     }
 }

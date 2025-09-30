@@ -13,6 +13,12 @@ async fn main() -> anyhow::Result<()> {
     println!("設定ファイルを読み込みました");
     println!("WebUIサーバーアドレス: {}", config.server_address());
     println!("バックエンドAPI: {}", config.backend.base_url);
+    if config.realtime.enabled {
+        let dir = config.realtime.config_dir.as_deref().unwrap_or("(未設定)");
+        println!("リアルタイムバックエンド: 有効 ({})", dir);
+    } else {
+        println!("リアルタイムバックエンド: 無効");
+    }
 
     let app_state = AppState::new(config.clone());
     let app = whisper_webui::create_app(app_state);

@@ -1,0 +1,44 @@
+supported_clients:
+  browsers:
+    - name: "Chrome"
+      min_version: "120"
+    - name: "Firefox"
+      min_version: "118"
+    - name: "Edge"
+      min_version: "120"
+  mobile:
+    - os: "iOS"
+      min_version: "16.0"
+    - os: "Android"
+      min_version: "12"
+network:
+  max_bandwidth_mbps: 150
+  preferred_codecs:
+    audio:
+      - opus
+      - aac
+signaling:
+  default_bitrate_kbps: 320
+  ice_servers:
+    - urls:
+        - "stun:stun.l.google.com:19302"
+        - "stun:global.stun.twilio.com:3478"
+      username: ""
+      credential: ""
+    - urls:
+        - "turn:turn.example.com:3478"
+      username: "realtime"
+      credential: "s3cret"
+resources:
+  max_concurrent_sessions: 200
+  session_timeout_s: 120
+  gpu:
+    model: "NVIDIA A10"
+    count: 2
+  cpu:
+    cores: 16
+    min_clock_ghz: 2.8
+token:
+  issuer: "https://auth.example.com"
+  jwks_url: "https://auth.example.com/.well-known/jwks.json"
+  audience: "whisper-realtime"

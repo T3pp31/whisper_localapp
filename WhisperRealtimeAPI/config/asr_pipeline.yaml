@@ -1,0 +1,12 @@
+service:
+  endpoint: "http://localhost:50051"
+  request_timeout_ms: 1500
+  max_stream_duration_s: 3600
+streaming:
+  partial_result_interval_ms: 200
+  finalization_silence_ms: 800
+  max_pending_requests: 4
+model:
+  name: "faster-whisper-large-v3"
+  language: "auto"
+  enable_vad: true
