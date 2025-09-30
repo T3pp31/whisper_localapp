@@ -3,6 +3,7 @@ mod audio;
 mod error;
 mod monitoring;
 mod server;
+mod whisper;
 mod system;
 
 use std::fs;
@@ -15,6 +16,7 @@ pub use audio::*;
 pub use error::ConfigError;
 pub use monitoring::*;
 pub use server::*;
+pub use whisper::*;
 pub use system::*;
 
 pub const CONFIG_DIR_ENV: &str = "WHISPER_REALTIME_CONFIG_DIR";
@@ -26,6 +28,7 @@ pub struct ConfigSet {
     pub asr: AsrPipelineConfig,
     pub monitoring: MonitoringConfig,
     pub server: ServerConfig,
+    pub whisper: WhisperModelConfig,
     root: PathBuf,
 }
 
@@ -41,6 +44,7 @@ impl ConfigSet {
         let asr = load_yaml(root.join("asr_pipeline.yaml"))?;
         let monitoring = load_yaml(root.join("monitoring.yaml"))?;
         let server = load_yaml(root.join("server.yaml"))?;
+        let whisper = load_yaml(root.join("whisper_model.yaml"))?;
 
         Ok(Self {
             system,
@@ -48,6 +52,7 @@ impl ConfigSet {
             asr,
             monitoring,
             server,
+            whisper,
             root,
         })
     }

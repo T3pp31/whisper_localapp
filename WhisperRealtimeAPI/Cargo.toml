@@ -33,6 +33,7 @@ audiopus = "0.3.0-rc.0"
 # gRPC for ASR service
 tonic = "0.12"
 prost = "0.13"
+whisper-rs = "0.10"
 
 # Monitoring
 prometheus = { version = "0.13", features = ["process"] }

@@ -1,6 +1,8 @@
 mod client;
 mod error;
 pub mod grpc_client;
+pub mod server;
+pub mod whisper_engine;
 mod mock;
 
 use std::collections::HashMap;

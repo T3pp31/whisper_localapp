@@ -152,24 +152,64 @@ impl GrpcAsrClientAdapter {
 
 impl StreamingAsrClient for GrpcAsrClientAdapter {
     fn start_session(&self, session_id: &str) -> Result<StreamingSession, super::AsrError> {
-        let (command_tx, mut command_rx) = mpsc::channel::<AudioCommand>(32);
-        let (update_tx, update_rx) = mpsc::channel::<TranscriptUpdate>(32);
+        let (command_tx, mut command_rx) = mpsc::channel::<AudioCommand>(64);
+        let (update_tx, update_rx) = mpsc::channel::<TranscriptUpdate>(64);
         let session_id_string = session_id.to_string();
         let value = session_id_string.clone();
+
+        let inner = self.inner.clone();
         tokio::spawn(async move {
-            // 最低限の橋渡し: 現状はコマンドを消費して、Finish時にFinalを1件送る
-            while let Some(cmd) = command_rx.recv().await {
-                match cmd {
-                    AudioCommand::Frame(_samples) => {
-                        // 本実装では gRPC ストリーミングへ変換して送信する
+            let (audio_tx, audio_rx) = mpsc::channel::<bytes::Bytes>(256);
+            // gRPCストリーミングを開始
+            let mut client = inner.lock().await;
+            match client.start_streaming(audio_rx).await {
+                Ok(mut resp_rx) => {
+                    // レスポンス受信側
+                    let mut update_tx_clone = update_tx.clone();
+                    tokio::spawn(async move {
+                        while let Some(resp) = resp_rx.recv().await {
+                            let text = resp
+                                .results
+                                .get(0)
+                                .map(|r| r.transcript.clone())
+                                .unwrap_or_default();
+                            let upd = if resp.is_final {
+                                TranscriptUpdate::Final { text }
+                            } else {
+                                TranscriptUpdate::Partial { text, confidence: 0.0 }
+                            };
+                            if update_tx_clone.send(upd).await.is_err() {
+                                break;
+                            }
+                        }
+                    });
+
+                    // コマンド受信側（f32 -> i16 -> bytes）
+                    let mut audio_tx_opt = Some(audio_tx);
+                    while let Some(cmd) = command_rx.recv().await {
+                        match cmd {
+                            AudioCommand::Frame(samples) => {
+                                if let Some(tx) = &audio_tx_opt {
+                                    let mut bytes = Vec::with_capacity(samples.len() * 2);
+                                    for s in samples {
+                                        let v = (s.clamp(-1.0, 1.0) * 32767.0) as i16;
+                                        bytes.extend_from_slice(&v.to_le_bytes());
+                                    }
+                                    let _ = tx.send(bytes::Bytes::from(bytes)).await;
+                                }
+                            }
+                            AudioCommand::Finish => {
+                                audio_tx_opt = None; // channel close to finish stream
+                                break;
+                            }
+                        }
                     }
-                    AudioCommand::Finish => {
-                        let final_text_id = value.clone();
-                        let _ = update_tx
-                            .send(TranscriptUpdate::Final { text: format!("session {} finished", final_text_id) })
-                            .await;
-                        break;
-                    }
+                }
+                Err(_e) => {
+                    // 接続失敗: 簡易Finalを返す
+                    let _ = update_tx
+                        .send(TranscriptUpdate::Final { text: format!("session {} finished", value) })
+                        .await;
                 }
             }
         });

@@ -9,7 +9,8 @@ use whisper_realtime_api::config::ConfigSet;
 use whisper_realtime_api::signaling::SignalingService;
 use whisper_realtime_api::signaling::websocket::WebSocketSignalingHandler;
 use whisper_realtime_api::server;
-use whisper_realtime_api::transport::{ConnectionProfile, InMemoryTransport, StreamKind};
+use whisper_realtime_api::transport::{ConnectionProfile, InMemoryTransport, StreamKind, WebRtcTransport};
+use whisper_realtime_api::realtime::RealtimeOrchestrator;
 
 #[tokio::main]
 async fn main() {
@@ -22,6 +23,20 @@ async fn main() {
 
             let signaling = SignalingService::with_default_validator(config.clone());
             let transport = InMemoryTransport::default();
+            // WebRTCトランスポート
+            let rtc_ice: Vec<webrtc::ice_transport::ice_server::RTCIceServer> = config
+                .system
+                .signaling
+                .ice_servers
+                .iter()
+                .map(|s| webrtc::ice_transport::ice_server::RTCIceServer {
+                    urls: s.urls.clone(),
+                    username: s.username.clone().unwrap_or_default(),
+                    credential: s.credential.clone().unwrap_or_default(),
+                    credential_type: webrtc::ice_transport::ice_credential_type::RTCIceCredentialType::Unspecified,
+                })
+                .collect();
+            let webrtc = Arc::new(WebRtcTransport::new(rtc_ice));
             let asr_config = Arc::new(config.asr.clone());
             let target_sr = config.audio.target.sample_rate_hz as i32;
             let target_ch = config.audio.target.channels as i32;
@@ -66,14 +81,55 @@ async fn main() {
             );
 
             // WebSocketシグナリングサーバ起動
+            // WebSocketハンドラと受信チャネル
+            let (incoming_tx, mut incoming_rx) = tokio::sync::mpsc::channel(256);
+            let ws_handler = WebSocketSignalingHandler::with_channel(incoming_tx.clone());
+
+            // オーケストレータ
+            let orchestrator = Arc::new(RealtimeOrchestrator::new(config.clone(), Arc::new(asr_manager)));
+
             let ws_addr = config.server.ws_bind_addr.clone();
             info!(addr = %ws_addr, "starting websocket signaling server");
-            if let Err(e) = server::bind_and_run(&ws_addr, WebSocketSignalingHandler::new()).await {
-                error!(error = %e, "failed to start server");
-                std::process::exit(1);
+            let ws_handler_for_send = ws_handler.clone();
+            let server_task = tokio::spawn(async move {
+                if let Err(e) = server::bind_and_run(&ws_addr, ws_handler).await {
+                    error!(error = %e, "failed to start server");
+                }
+            });
+
+            // シグナリング受信をアプリ層で処理（メインタスク側で実行）
+            let default_profile = ConnectionProfile::new(
+                config.system.signaling.default_bitrate_kbps,
+                120,
+                [
+                    StreamKind::Audio,
+                    StreamKind::PartialTranscript,
+                    StreamKind::FinalTranscript,
+                    StreamKind::Control,
+                ],
+            );
+            while let Some(msg) = incoming_rx.recv().await {
+                match msg {
+                    whisper_realtime_api::signaling::websocket::SignalingMessage::Offer { session_id, sdp } => {
+                        let _ = webrtc.start_session(session_id.clone(), default_profile.clone()).await;
+                        if let Ok(answer) = webrtc.handle_offer(&session_id, &sdp).await {
+                            let _ = ws_handler_for_send
+                                .send_to_session(&session_id, whisper_realtime_api::signaling::websocket::SignalingMessage::Answer { session_id: session_id.clone(), sdp: answer })
+                                .await;
+                        }
+                        let _ = orchestrator.spawn_for_webrtc(webrtc.clone(), &session_id, ws_handler_for_send.clone()).await;
+                    }
+                    whisper_realtime_api::signaling::websocket::SignalingMessage::IceCandidate { session_id, candidate } => {
+                        let _ = webrtc.add_ice_candidate(&session_id, &candidate).await;
+                    }
+                    _ => {}
+                }
             }
 
-            let _ = (signaling, transport, asr_manager);
+            // 終了待機
+            let _ = server_task.await;
+
+            let _ = (signaling, transport);
         }
         Err(err) => {
             error!(error = ?err, "failed to load configuration");

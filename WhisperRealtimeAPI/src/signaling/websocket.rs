@@ -26,6 +26,18 @@ pub enum SignalingMessage {
         candidate: String,
     },
 
+    /// 部分文字起こし
+    #[serde(rename = "partial_transcript")]
+    PartialTranscript {
+        session_id: String,
+        text: String,
+        confidence: f32,
+    },
+
+    /// 最終文字起こし
+    #[serde(rename = "final_transcript")]
+    FinalTranscript { session_id: String, text: String },
+
     /// エラー
     #[serde(rename = "error")]
     Error { message: String },
@@ -35,13 +47,25 @@ pub enum SignalingMessage {
 #[derive(Clone)]
 pub struct WebSocketSignalingHandler {
     sessions: Arc<RwLock<HashMap<String, mpsc::Sender<SignalingMessage>>>>,
+    incoming_tx: mpsc::Sender<SignalingMessage>,
 }
 
 impl WebSocketSignalingHandler {
     pub fn new() -> Self {
-        Self {
-            sessions: Arc::new(RwLock::new(HashMap::new())),
-        }
+        let (tx, _rx) = mpsc::channel(256);
+        Self { sessions: Arc::new(RwLock::new(HashMap::new())), incoming_tx: tx }
+    }
+
+    pub fn with_channel(tx: mpsc::Sender<SignalingMessage>) -> Self {
+        Self { sessions: Arc::new(RwLock::new(HashMap::new())), incoming_tx: tx }
+    }
+
+    pub fn subscribe(&self) -> mpsc::Receiver<SignalingMessage> {
+        let (_tx, rx) = mpsc::channel(1);
+        // 新規のチャネルはサポートしていないので、cloneしたtxを返すのではなく、
+        // 明示的にwith_channelで生成したrxを使ってもらう想定。
+        // ここではダミーを返す。
+        rx
     }
 
     /// WebSocket接続を処理
@@ -80,6 +104,7 @@ impl WebSocketSignalingHandler {
         // 受信タスク（クライアント→サーバー）
         let session_id_for_recv = session_id.clone();
         let sessions_for_recv = self.sessions.clone();
+        let incoming = self.incoming_tx.clone();
         let recv_task = tokio::spawn(async move {
             while let Some(msg) = ws_receiver.next().await {
                 match msg {
@@ -88,11 +113,9 @@ impl WebSocketSignalingHandler {
 
                         match serde_json::from_str::<SignalingMessage>(&text) {
                             Ok(signaling_msg) => {
-                                // メッセージ処理
-                                if let Err(e) =
-                                    Self::process_message(&sessions_for_recv, signaling_msg).await
-                                {
-                                    error!(session_id = %session_id_for_recv, error = %e, "メッセージ処理失敗");
+                                // アプリ層にフォワード
+                                if let Err(e) = incoming.send(signaling_msg).await {
+                                    error!(session_id = %session_id_for_recv, error = %e, "メッセージ転送失敗");
                                 }
                             }
                             Err(e) => {
@@ -185,5 +208,20 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"type\":\"offer\""));
         assert!(json.contains("test-123"));
+    }
+
+    #[test]
+    fn test_partial_final_serialization() {
+        let p = SignalingMessage::PartialTranscript {
+            session_id: "s1".into(),
+            text: "hello".into(),
+            confidence: 0.9,
+        };
+        let j = serde_json::to_string(&p).unwrap();
+        assert!(j.contains("\"type\":\"partial_transcript\""));
+
+        let f = SignalingMessage::FinalTranscript { session_id: "s1".into(), text: "world".into() };
+        let j2 = serde_json::to_string(&f).unwrap();
+        assert!(j2.contains("\"type\":\"final_transcript\""));
     }
 }

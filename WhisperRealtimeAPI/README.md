@@ -32,17 +32,22 @@ cargo build
 - `asr_pipeline.yaml`: ASR設定
 - `monitoring.yaml`: モニタリング設定
 - `server.yaml`: サーバのバインド先（例: `ws_bind_addr: "127.0.0.1:8080"`）
+- `whisper_model.yaml`: whisper.cppモデルのパス・スレッド数・言語設定
 
-### 3. ASR gRPCサーバーの起動（必須）
+### 3. ASR gRPCサーバーの起動（同一プロジェクト内の実装を追加）
 
-本バックエンドは起動時に `GrpcAsrClient` を使用し、外部ASRサーバへ接続します。GPUを使用する場合は、ASRサーバ（例：FasterWhisper/CTranslate2 CUDA対応）をGPU有効で起動してください。
+本プロジェクト内にASR gRPCサーバを実装しました。既定ではwhisper-rs（whisper.cpp）で実推論（CPU）を行います。
 
-接続先は `config/asr_pipeline.yaml` の `service.endpoint` を使用します（既定: `http://localhost:50051`）。
+- バインド先は `config/server.yaml` の `asr_grpc_bind_addr`（既定: `127.0.0.1:50051`）。
+- モデル設定は `config/whisper_model.yaml` を使用します（例: `model_path: models/ggml-large-v3-turbo-q5_0.bin`）。
+- 起動コマンド:
 
 ```bash
-# ASRサービスの起動例（別プロジェクト・参考）
-# python -m faster_whisper_server --port 50051  # venvは環境に合わせて選択
+RUST_LOG=info cargo run --bin asr_server
 ```
+
+バックエンド本体は `GrpcAsrClient` で `config/asr_pipeline.yaml` の `service.endpoint` に接続します。ローカルASRサーバを使う場合、`service.endpoint` を `http://127.0.0.1:50051` に設定してください。
+注意: WebRTC → AudioPipeline → ASRへの完全な配線は段階的に実装中です（TODO参照）。
 
 ### 4. バックエンド起動（WebSocketシグナリングサーバ）
 
@@ -52,6 +57,12 @@ RUST_LOG=info cargo run
 
 起動後、`config/server.yaml` の `ws_bind_addr` で指定されたアドレスにWebSocketサーバがバインドされます。
 クライアントは `ws://<host>/ws?session_id=<id>` で接続し、`SignalingMessage` をJSONで送受信します。
+送受信するメッセージ例:
+- 送信: `{ "type": "offer", "session_id": "<id>", "sdp": "..." }`
+- 受信: `{ "type": "answer", "session_id": "<id>", "sdp": "..." }`
+- 送信: `{ "type": "ice_candidate", "session_id": "<id>", "candidate": "..." }`
+- 受信(部分結果): `{ "type": "partial_transcript", "session_id": "<id>", "text": "...", "confidence": 0.92 }`
+- 受信(最終結果): `{ "type": "final_transcript", "session_id": "<id>", "text": "..." }`
 
 ## テスト
 
