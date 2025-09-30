@@ -139,7 +139,8 @@ fi
 info "Starting backend (WebSocket signaling) ..."
 (
   cd "$ROOT_DIR"
-  RUST_LOG="$RUST_LOG" cargo run $CARGO_PROFILE_FLAG >> "$LOG_DIR/backend.log" 2>&1
+  # メインのバックエンドは `whisper_realtime_api` バイナリ
+  RUST_LOG="$RUST_LOG" cargo run $CARGO_PROFILE_FLAG --bin whisper_realtime_api >> "$LOG_DIR/backend.log" 2>&1
 ) &
 API_PID=$!
 
@@ -172,4 +173,3 @@ fi
 
 info "A child process exited; shutting down the remaining service"
 exit 1
-
