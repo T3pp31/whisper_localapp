@@ -178,8 +178,8 @@ impl QuicConnection {
 async fn stream_sender(
     session_id: String,
     kind: StreamKind,
-    mut send_stream: SendStream,
-    mut tx: mpsc::Sender<Bytes>,
+    _send_stream: SendStream,
+    _tx: mpsc::Sender<Bytes>,
 ) {
     debug!(session_id = %session_id, kind = ?kind, "ストリーム送信開始");
 

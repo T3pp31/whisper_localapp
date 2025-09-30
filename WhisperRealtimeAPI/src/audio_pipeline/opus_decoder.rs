@@ -46,7 +46,7 @@ impl AudioOpusDecoder {
 
         let decoded_samples = self
             .decoder
-            .decode(Some(packet.as_ref()), &mut output, false)
+            .decode(Some(audiopus::packet::Packet::try_from(packet.as_ref()).unwrap()), audiopus::MutSignals::try_from(&mut output[..]).unwrap(), false)
             .map_err(|e| format!("Opusデコード失敗: {:?}", e))?;
 
         output.truncate(decoded_samples * self.channels);
@@ -67,7 +67,7 @@ impl AudioOpusDecoder {
 
         let decoded_samples = self
             .decoder
-            .decode(None, &mut output, false)
+            .decode(None, audiopus::MutSignals::try_from(&mut output[..]).unwrap(), false)
             .map_err(|e| format!("PLC処理失敗: {:?}", e))?;
 
         output.truncate(decoded_samples * self.channels);

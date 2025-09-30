@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
-use interceptor::registry::Registry;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
@@ -14,7 +13,6 @@ use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
-use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_remote::TrackRemote;
 
 /// WebRTCトランスポートマネージャ
@@ -25,6 +23,7 @@ pub struct WebRtcTransport {
 
 /// WebRTCセッション
 pub struct WebRtcSession {
+    #[allow(dead_code)]
     session_id: String,
     peer_connection: Arc<RTCPeerConnection>,
     audio_rx: Arc<RwLock<Option<mpsc::Receiver<Bytes>>>>,
@@ -52,21 +51,12 @@ impl WebRtcTransport {
 
         // Opusコーデックを登録
         media_engine
-            .register_codec(
-                RTCRtpCodecCapability {
-                    mime_type: "audio/opus".to_owned(),
-                    clock_rate: 48000,
-                    channels: 2,
-                    sdp_fmtp_line: "".to_owned(),
-                    rtcp_feedback: vec![],
-                },
-                webrtc::rtp_transceiver::rtp_codec::RTPCodecType::Audio,
-            )
-            .map_err(|e| TransportError::Internal(format!("コーデック登録失敗: {}", e)))?;
+            .register_default_codecs()
+            .map_err(|e| TransportError::Internal { message: format!("コーデック登録失敗: {}", e) })?;
 
         let mut registry = interceptor::registry::Registry::new();
         registry = register_default_interceptors(registry, &mut media_engine)
-            .map_err(|e| TransportError::Internal(format!("インターセプター登録失敗: {}", e)))?;
+            .map_err(|e| TransportError::Internal { message: format!("インターセプター登録失敗: {}", e) })?;
 
         let api = APIBuilder::new()
             .with_media_engine(media_engine)
@@ -81,7 +71,7 @@ impl WebRtcTransport {
         let peer_connection = Arc::new(
             api.new_peer_connection(config)
                 .await
-                .map_err(|e| TransportError::Internal(format!("PeerConnection作成失敗: {}", e)))?,
+                .map_err(|e| TransportError::Internal { message: format!("PeerConnection作成失敗: {}", e) })?,
         );
 
         Ok(peer_connection)
@@ -113,16 +103,13 @@ impl WebRtcTransport {
                         "音声トラック受信開始"
                     );
 
-                    if let Some(track_remote) = track.as_ref().downcast_ref::<TrackRemote>() {
-                        tokio::spawn(process_audio_track(
-                            session_id.clone(),
-                            Arc::new(track_remote.clone()),
-                            audio_tx,
-                        ));
-                    }
+                    tokio::spawn(process_audio_track(
+                        session_id.clone(),
+                        track.clone(),
+                        audio_tx,
+                    ));
                 })
-            }))
-            .await;
+            }));
 
         // 接続状態監視
         let session_id_for_state = session_id.clone();
@@ -142,8 +129,7 @@ impl WebRtcTransport {
                         _ => {}
                     }
                 })
-            }))
-            .await;
+            }));
 
         let session_id_for_ice = session_id.clone();
         peer_connection
@@ -152,8 +138,7 @@ impl WebRtcTransport {
                 Box::pin(async move {
                     debug!(session_id = %session_id, ice_state = ?state, "ICE状態変化");
                 })
-            }))
-            .await;
+            }));
 
         let session = Arc::new(WebRtcSession {
             session_id: session_id.clone(),
@@ -177,28 +162,28 @@ impl WebRtcTransport {
         let sessions = self.sessions.read();
         let session = sessions
             .get(session_id)
-            .ok_or_else(|| TransportError::SessionNotFound(session_id.to_string()))?;
+            .ok_or_else(|| TransportError::NotFound { session_id: session_id.to_string() })?;
 
         let offer = RTCSessionDescription::offer(offer_sdp.to_string())
-            .map_err(|e| TransportError::Internal(format!("Offer SDP解析失敗: {}", e)))?;
+            .map_err(|e| TransportError::Internal { message: format!("Offer SDP解析失敗: {}", e) })?;
 
         session
             .peer_connection
             .set_remote_description(offer)
             .await
-            .map_err(|e| TransportError::Internal(format!("RemoteDescription設定失敗: {}", e)))?;
+            .map_err(|e| TransportError::Internal { message: format!("RemoteDescription設定失敗: {}", e) })?;
 
         let answer = session
             .peer_connection
             .create_answer(None)
             .await
-            .map_err(|e| TransportError::Internal(format!("Answer作成失敗: {}", e)))?;
+            .map_err(|e| TransportError::Internal { message: format!("Answer作成失敗: {}", e) })?;
 
         session
             .peer_connection
             .set_local_description(answer.clone())
             .await
-            .map_err(|e| TransportError::Internal(format!("LocalDescription設定失敗: {}", e)))?;
+            .map_err(|e| TransportError::Internal { message: format!("LocalDescription設定失敗: {}", e) })?;
 
         Ok(answer.sdp)
     }
@@ -212,7 +197,7 @@ impl WebRtcTransport {
         let sessions = self.sessions.read();
         let session = sessions
             .get(session_id)
-            .ok_or_else(|| TransportError::SessionNotFound(session_id.to_string()))?;
+            .ok_or_else(|| TransportError::NotFound { session_id: session_id.to_string() })?;
 
         let ice_candidate = webrtc::ice_transport::ice_candidate::RTCIceCandidateInit {
             candidate: candidate.to_string(),
@@ -223,7 +208,7 @@ impl WebRtcTransport {
             .peer_connection
             .add_ice_candidate(ice_candidate)
             .await
-            .map_err(|e| TransportError::Internal(format!("ICE Candidate追加失敗: {}", e)))?;
+            .map_err(|e| TransportError::Internal { message: format!("ICE Candidate追加失敗: {}", e) })?;
 
         Ok(())
     }
@@ -238,7 +223,7 @@ impl WebRtcTransport {
                 .peer_connection
                 .close()
                 .await
-                .map_err(|e| TransportError::Internal(format!("PeerConnection終了失敗: {}", e)))?;
+                .map_err(|e| TransportError::Internal { message: format!("PeerConnection終了失敗: {}", e) })?;
             info!(session_id = %session_id, "セッション終了");
         }
 
@@ -267,7 +252,7 @@ impl WebRtcSession {
         self.control_tx
             .send(ControlMessage::BitrateChange(bitrate_kbps))
             .await
-            .map_err(|e| TransportError::Internal(format!("ビットレート変更送信失敗: {}", e)))?;
+            .map_err(|e| TransportError::Internal { message: format!("ビットレート変更送信失敗: {}", e) })?;
         Ok(())
     }
 }

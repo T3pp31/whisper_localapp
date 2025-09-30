@@ -1029,7 +1029,7 @@ async fn handle_websocket(
                 });
 
                 if sender
-                    .send(Message::Text(serde_json::to_string(&response).unwrap()))
+                    .send(Message::Text(serde_json::to_string(&response).unwrap().into()))
                     .await
                     .is_err()
                 {

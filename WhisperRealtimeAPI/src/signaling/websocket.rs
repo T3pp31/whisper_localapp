@@ -65,7 +65,7 @@ impl WebSocketSignalingHandler {
         let send_task = tokio::spawn(async move {
             while let Some(message) = rx.recv().await {
                 let json = serde_json::to_string(&message).unwrap_or_default();
-                if ws_sender.send(Message::Text(json)).await.is_err() {
+                if ws_sender.send(Message::Text(json.into())).await.is_err() {
                     warn!(session_id = %session_id_for_send, "WebSocket送信失敗");
                     break;
                 }
@@ -124,11 +124,11 @@ impl WebSocketSignalingHandler {
 
     /// メッセージ処理
     async fn process_message(
-        sessions: &Arc<RwLock<HashMap<String, mpsc::Sender<SignalingMessage>>>>,
+        _sessions: &Arc<RwLock<HashMap<String, mpsc::Sender<SignalingMessage>>>>,
         message: SignalingMessage,
     ) -> Result<(), String> {
         match message {
-            SignalingMessage::Offer { session_id, sdp } => {
+            SignalingMessage::Offer { session_id, sdp: _ } => {
                 debug!(session_id = %session_id, "Offer SDP受信");
                 // ここでWebRTCトランスポートにSDPを渡して Answer を生成
                 // 実装は別モジュールで統合
@@ -136,7 +136,7 @@ impl WebSocketSignalingHandler {
             }
             SignalingMessage::IceCandidate {
                 session_id,
-                candidate,
+                candidate: _,
             } => {
                 debug!(session_id = %session_id, "ICE Candidate受信");
                 // ICE Candidateを WebRTCトランスポートに追加

@@ -21,23 +21,35 @@ use asr_proto::{RecognizeConfig, StreamingRecognizeRequest, StreamingRecognizeRe
 pub struct GrpcAsrClient {
     endpoint: String,
     config: Arc<AsrPipelineConfig>,
+    sample_rate_hz: i32,
+    channels: i32,
     client: Option<AsrServiceClient<Channel>>,
 }
 
 impl GrpcAsrClient {
-    pub fn new(endpoint: String, config: Arc<AsrPipelineConfig>) -> Self {
+    pub fn new(endpoint: String, config: Arc<AsrPipelineConfig>, sample_rate_hz: i32, channels: i32) -> Self {
         Self {
             endpoint,
             config,
+            sample_rate_hz,
+            channels,
             client: None,
         }
+    }
+
+    pub fn sample_rate(&self) -> i32 {
+        self.sample_rate_hz
+    }
+
+    pub fn channels(&self) -> i32 {
+        self.channels
     }
 
     /// gRPCクライアント接続
     async fn connect(&mut self) -> Result<(), AsrError> {
         let client = AsrServiceClient::connect(self.endpoint.clone())
             .await
-            .map_err(|e| AsrError::Internal(format!("gRPC接続失敗: {}", e)))?;
+            .map_err(|e| AsrError::Processing { message: format!("gRPC接続失敗: {}", e) })?;
 
         info!(endpoint = %self.endpoint, "ASR gRPCクライアント接続完了");
         self.client = Some(client);
@@ -56,16 +68,16 @@ impl GrpcAsrClient {
         let client = self
             .client
             .as_mut()
-            .ok_or_else(|| AsrError::Internal("クライアント未接続".to_string()))?;
+            .ok_or_else(|| AsrError::Processing { message: "クライアント未接続".to_string() })?;
 
         let (request_tx, request_rx) = mpsc::channel::<StreamingRecognizeRequest>(100);
         let (response_tx, response_rx) = mpsc::channel::<StreamingRecognizeResponse>(100);
 
         // 最初に設定を送信
         let config = RecognizeConfig {
-            language: self.config.language.clone().unwrap_or_default(),
-            sample_rate: self.config.input_sample_rate_hz as i32,
-            channels: self.config.channels as i32,
+            language: self.config.model.language.clone(),
+            sample_rate: self.sample_rate_hz,
+            channels: self.channels,
         };
 
         request_tx
@@ -75,7 +87,7 @@ impl GrpcAsrClient {
                 )),
             })
             .await
-            .map_err(|e| AsrError::Internal(format!("設定送信失敗: {}", e)))?;
+            .map_err(|e| AsrError::Processing { message: format!("設定送信失敗: {}", e) })?;
 
         // 音声データ送信タスク
         tokio::spawn(async move {
@@ -99,7 +111,7 @@ impl GrpcAsrClient {
         let mut response_stream = client
             .streaming_recognize(request_stream)
             .await
-            .map_err(|e| AsrError::Internal(format!("ストリーミング開始失敗: {}", e)))?
+            .map_err(|e| AsrError::Processing { message: format!("ストリーミング開始失敗: {}", e) })?
             .into_inner();
 
         // レスポンス受信タスク
@@ -132,16 +144,29 @@ mod tests {
     #[test]
     fn test_grpc_client_creation() {
         let config = Arc::new(AsrPipelineConfig {
-            model_name: "base".to_string(),
-            language: Some("ja".to_string()),
-            input_sample_rate_hz: 16000,
-            channels: 1,
-            compute_type: "float32".to_string(),
-            beam_size: 5,
-            vad_filter: true,
+            service: crate::config::ServiceConfig {
+                endpoint: "http://localhost:50051".to_string(),
+                request_timeout_ms: 1500,
+                max_stream_duration_s: 3600,
+            },
+            streaming: crate::config::StreamingConfig {
+                partial_result_interval_ms: 200,
+                finalization_silence_ms: 800,
+                max_pending_requests: 4,
+            },
+            model: crate::config::ModelConfig {
+                name: "base".to_string(),
+                language: "ja".to_string(),
+                enable_vad: true,
+            },
         });
 
-        let client = GrpcAsrClient::new("http://localhost:50051".to_string(), config);
+        let client = GrpcAsrClient::new(
+            "http://localhost:50051".to_string(),
+            config,
+            16000,
+            1,
+        );
         assert!(client.client.is_none());
     }
 }

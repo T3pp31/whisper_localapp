@@ -44,7 +44,7 @@ pub fn create_app(app_state: AppState) -> Router {
             "/api/realtime/session/{id}",
             delete(handlers::realtime_end_session),
         )
-        .route("/ws/realtime/:session_id", get(handlers::websocket_handler))
+        .route("/ws/realtime/{session_id}", get(handlers::websocket_handler))
         .nest_service("/static", ServeDir::new("static"))
         .layer(
             ServiceBuilder::new()

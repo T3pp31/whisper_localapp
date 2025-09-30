@@ -63,7 +63,8 @@ where
                 session_id: session_id.to_string(),
             })?
             .clone();
-        session.lock().await.finish().await
+        let guard = session.lock().await;
+        guard.finish().await
     }
 
     pub async fn poll_update(

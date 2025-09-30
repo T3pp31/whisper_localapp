@@ -7,6 +7,7 @@ fn map_health_response_converts_fields() {
         status: "healthy".to_string(),
         version: Some(" 1.0.0 ".to_string()),
         model_loaded: true,
+        model_name: Some("whisper-large".to_string()),
         uptime_seconds: 7_200,
         memory_usage_mb: Some(512),
     };
