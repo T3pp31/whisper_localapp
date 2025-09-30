@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package asr;
+
+// ASRストリーミングサービス
+service AsrService {
+    // ストリーミング文字起こし
+    rpc StreamingRecognize(stream StreamingRecognizeRequest) returns (stream StreamingRecognizeResponse);
+}
+
+// ストリーミングリクエスト
+message StreamingRecognizeRequest {
+    oneof request {
+        RecognizeConfig config = 1;
+        bytes audio_content = 2;
+    }
+}
+
+// 認識設定
+message RecognizeConfig {
+    string language = 1;
+    int32 sample_rate = 2;
+    int32 channels = 3;
+}
+
+// ストリーミングレスポンス
+message StreamingRecognizeResponse {
+    repeated SpeechRecognitionResult results = 1;
+    bool is_final = 2;
+}
+
+// 音声認識結果
+message SpeechRecognitionResult {
+    string transcript = 1;
+    float confidence = 2;
+    float start_time = 3;
+    float end_time = 4;
+}

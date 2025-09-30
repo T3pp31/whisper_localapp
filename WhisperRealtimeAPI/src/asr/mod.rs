@@ -1,5 +1,6 @@
 mod client;
 mod error;
+pub mod grpc_client;
 mod mock;
 
 use std::collections::HashMap;
@@ -11,6 +12,7 @@ use crate::config::AsrPipelineConfig;
 
 pub use client::{StreamingAsrClient, StreamingSession, TranscriptUpdate};
 pub use error::AsrError;
+pub use grpc_client::GrpcAsrClient;
 pub use mock::MockAsrClient;
 
 pub struct AsrManager<C>

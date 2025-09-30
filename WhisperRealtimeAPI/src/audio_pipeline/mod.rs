@@ -1,5 +1,6 @@
 mod frame_reconstructor;
 mod normalizer;
+mod opus_decoder;
 mod resampler;
 mod utils;
 
@@ -9,6 +10,7 @@ use frame_reconstructor::FrameReconstructor;
 use normalizer::LevelNormalizer;
 use utils::interleaved_to_mono;
 
+pub use opus_decoder::AudioOpusDecoder;
 pub use resampler::LinearResampler;
 
 #[derive(Debug)]

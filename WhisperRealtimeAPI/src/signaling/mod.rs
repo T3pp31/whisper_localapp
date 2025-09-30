@@ -2,6 +2,7 @@ mod error;
 mod resource;
 mod session;
 mod token;
+pub mod websocket;
 
 use std::sync::Arc;
 
@@ -15,6 +16,7 @@ pub use session::{
     ClientMetadata, ClientType, IceServer, SessionHandle, SessionRequest, SessionResponse,
 };
 pub use token::{NoopTokenValidator, TokenClaims, TokenValidator};
+pub use websocket::{SignalingMessage, WebSocketSignalingHandler};
 
 #[derive(Clone)]
 pub struct SignalingService<V>

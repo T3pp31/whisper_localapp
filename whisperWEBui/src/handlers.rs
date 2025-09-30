@@ -548,6 +548,7 @@ pub async fn index(State(state): State<AppState>) -> Html<String> {
         <button class="notification-close" id="notification-close">×</button>
     </div>
 
+    <script src="/static/js/realtime-webrtc.js"></script>
     <script src="/static/js/app.js"></script>
 </body>
 </html>
@@ -986,4 +987,67 @@ fn map_signaling_error(error: SignalingError) -> String {
             format!("内部エラーが発生しました: {}", message)
         }
     }
+}
+
+/// WebSocketシグナリングハンドラ
+pub async fn websocket_handler(
+    ws: axum::extract::ws::WebSocketUpgrade,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+    State(state): State<AppState>,
+) -> axum::response::Response {
+    log::info!("WebSocket接続リクエスト: session_id={}", session_id);
+
+    ws.on_upgrade(move |socket| handle_websocket(socket, session_id, state))
+}
+
+async fn handle_websocket(
+    socket: axum::extract::ws::WebSocket,
+    session_id: String,
+    state: AppState,
+) {
+    use axum::extract::ws::Message;
+    use futures_util::{SinkExt, StreamExt};
+
+    log::info!("WebSocket接続確立: session_id={}", session_id);
+
+    let (mut sender, mut receiver) = socket.split();
+
+    // 簡易的なエコーサーバー実装（実際はWebRTCシグナリングロジックを統合）
+    while let Some(msg) = receiver.next().await {
+        match msg {
+            Ok(Message::Text(text)) => {
+                log::debug!("受信メッセージ: {}", text);
+
+                // TODO: ここでWebRTCトランスポートと統合
+                // - Offerを受信 → Answerを生成
+                // - ICE Candidateを処理
+
+                let response = serde_json::json!({
+                    "type": "ack",
+                    "session_id": session_id,
+                    "message": "received"
+                });
+
+                if sender
+                    .send(Message::Text(serde_json::to_string(&response).unwrap()))
+                    .await
+                    .is_err()
+                {
+                    log::warn!("WebSocket送信失敗: session_id={}", session_id);
+                    break;
+                }
+            }
+            Ok(Message::Close(_)) => {
+                log::info!("WebSocket切断: session_id={}", session_id);
+                break;
+            }
+            Err(e) => {
+                log::error!("WebSocketエラー: {}, session_id={}", e, session_id);
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    log::info!("WebSocket接続終了: session_id={}", session_id);
 }
