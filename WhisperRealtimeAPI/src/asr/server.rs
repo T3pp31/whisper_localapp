@@ -1,3 +1,8 @@
+//! ローカルASR gRPCサーバ実装
+//!
+//! whisperエンジンが読み込める場合はそれを用い、読み込めない場合はモック応答を返します。
+//! クライアントからは `Config` メッセージ→複数 `AudioContent` → ストリーム終了 の順で
+//! 送信されることを想定しています。
 use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status};
 

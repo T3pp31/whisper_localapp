@@ -1,11 +1,14 @@
+//! シグナリングセッションおよびクライアント情報の型
 use std::time::Instant;
 
+/// クライアント種別
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientType {
     Browser,
     Mobile,
 }
 
+/// クライアントの識別情報
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientMetadata {
     pub client_type: ClientType,
@@ -14,6 +17,7 @@ pub struct ClientMetadata {
 }
 
 impl ClientMetadata {
+    /// ブラウザクライアント情報を生成
     pub fn browser(name: impl Into<String>, version: impl Into<String>) -> Self {
         Self {
             client_type: ClientType::Browser,
@@ -22,6 +26,7 @@ impl ClientMetadata {
         }
     }
 
+    /// モバイルクライアント情報を生成
     pub fn mobile(os: impl Into<String>, version: impl Into<String>) -> Self {
         Self {
             client_type: ClientType::Mobile,
@@ -31,6 +36,7 @@ impl ClientMetadata {
     }
 }
 
+/// セッション開始要求
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionRequest {
     pub client: ClientMetadata,
@@ -38,6 +44,7 @@ pub struct SessionRequest {
     pub retry: bool,
 }
 
+/// ICEサーバ情報
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IceServer {
     pub urls: Vec<String>,
@@ -45,6 +52,7 @@ pub struct IceServer {
     pub credential: Option<String>,
 }
 
+/// セッション応答内容
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionResponse {
     pub session_id: String,
@@ -52,6 +60,7 @@ pub struct SessionResponse {
     pub max_bitrate_kbps: u32,
 }
 
+/// 有効なセッションのハンドル
 #[derive(Debug, Clone)]
 pub struct SessionHandle {
     pub id: String,
@@ -61,6 +70,7 @@ pub struct SessionHandle {
 }
 
 impl SessionHandle {
+    /// 生成時刻は現在時刻で初期化
     pub fn new(id: String, client: ClientMetadata, owner: String) -> Self {
         Self {
             id,

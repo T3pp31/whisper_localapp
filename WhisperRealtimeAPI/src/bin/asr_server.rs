@@ -1,3 +1,7 @@
+//! ローカルASR gRPCサーバの起動バイナリ
+//!
+//! 設定に基づいて whisper エンジンをロード可能であれば利用し、
+//! そうでない場合はモック応答で動作します。
 use std::net::SocketAddr;
 
 use tokio_stream::wrappers::TcpListenerStream;

@@ -120,6 +120,26 @@ impl Config {
         fs::create_dir_all(&self.paths.temp_dir)?;
         Ok(())
     }
+
+    /// `paths.temp_dir` の絶対パスを返す（相対指定なら実行ファイルのあるディレクトリ基準で解決）。
+    pub fn absolute_temp_dir(&self) -> PathBuf {
+        let mut temp_dir = PathBuf::from(&self.paths.temp_dir);
+        if temp_dir.is_relative() {
+            let base = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            temp_dir = base.join(temp_dir);
+        }
+        temp_dir
+    }
+
+    /// `paths.temp_dir` を作成して絶対パスを返す。
+    pub fn ensure_temp_dir(&self) -> Result<PathBuf> {
+        let dir = self.absolute_temp_dir();
+        fs::create_dir_all(&dir)?;
+        Ok(dir)
+    }
 }
 
 impl Default for Config {

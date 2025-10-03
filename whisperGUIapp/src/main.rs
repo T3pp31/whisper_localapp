@@ -18,6 +18,7 @@ use whisperGUIapp::audio::AudioProcessor;
 use whisperGUIapp::config::Config;
 use whisperGUIapp::models::MODEL_CATALOG;
 use whisperGUIapp::whisper::WhisperEngine;
+use whisperGUIapp::utils;
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -165,19 +166,9 @@ async fn prepare_preview_wav(path: String, state: State<'_, AppState>, app: taur
     let mut processor = AudioProcessor::new(&config)
         .map_err(|e| format!("オーディオ処理の初期化に失敗しました: {}", e))?;
 
-    // temp_dir が相対パスの場合でも、絶対パスに解決してから使用する
-    let mut temp_dir = PathBuf::from(&config.paths.temp_dir);
-    if temp_dir.is_relative() {
-        // 実行ディレクトリを基準に絶対パスへ（失敗時はカレントディレクトリ）
-        let base = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-        temp_dir = base.join(temp_dir);
-    }
-
-    // temp ディレクトリを確実に作成
-    std::fs::create_dir_all(&temp_dir)
+    // temp ディレクトリを絶対化し作成
+    let temp_dir = config
+        .ensure_temp_dir()
         .map_err(|e| format!("一時ディレクトリの作成に失敗しました: {}", e))?;
 
     let preview_path = temp_dir.join("preview.wav");
@@ -555,30 +546,12 @@ async fn transcribe_via_remote(
     cached_audio: Option<CachedAudio>,
 ) -> Result<TranscriptionResult, String> {
     // エンドポイントを組み立て（endpoint が絶対URLなら優先）
-    let endpoint_trimmed = endpoint_path.trim();
-    let endpoint_full = if endpoint_trimmed.starts_with("http://") || endpoint_trimmed.starts_with("https://") {
-        endpoint_trimmed.to_string()
-    } else {
-        let base = base_url.trim().trim_end_matches('/');
-        let ep_owned = if endpoint_trimmed.starts_with('/') {
-            endpoint_trimmed.to_string()
-        } else {
-            format!("/{}", endpoint_trimmed)
-        };
-        format!("{}{}", base, ep_owned)
-    };
+    let endpoint_full = utils::build_full_url(base_url, endpoint_path);
 
     // まず、プレビューWAVが使えるならそれを優先（再デコード回避）
-    // temp ディレクトリを解決
-    let mut temp_dir = std::path::PathBuf::from(&config.paths.temp_dir);
-    if temp_dir.is_relative() {
-        let base = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")));
-        temp_dir = base.join(temp_dir);
-    }
-    std::fs::create_dir_all(&temp_dir)
+    // temp ディレクトリを解決（絶対化 + 作成）
+    let temp_dir = config
+        .ensure_temp_dir()
         .map_err(|e| format!("一時ディレクトリの作成に失敗しました: {}", e))?;
 
     let preview_path = temp_dir.join("preview.wav");
@@ -603,13 +576,7 @@ async fn transcribe_via_remote(
         } else {
             // 異なるファイルのキャッシュなら無視して通常ルート
             // サーバ許容拡張子チェック
-            let allowed_exts = ["wav", "mp3", "m4a", "flac", "ogg"];
-            let ext_ok = orig_path
-                .extension()
-                .and_then(|s| s.to_str())
-                .map(|s| allowed_exts.contains(&s.to_lowercase().as_str()))
-                .unwrap_or(false);
-            if ext_ok {
+            if utils::is_allowed_audio_ext(&orig_path) {
                 orig_path.to_path_buf()
             } else {
                 let target = temp_dir.join("remote_upload.wav");
@@ -622,13 +589,7 @@ async fn transcribe_via_remote(
             }
         }
     } else {
-        let allowed_exts = ["wav", "mp3", "m4a", "flac", "ogg"];
-        let ext_ok = orig_path
-            .extension()
-            .and_then(|s| s.to_str())
-            .map(|s| allowed_exts.contains(&s.to_lowercase().as_str()))
-            .unwrap_or(false);
-        if ext_ok {
+        if utils::is_allowed_audio_ext(&orig_path) {
             orig_path.to_path_buf()
         } else {
             let target = temp_dir.join("remote_upload.wav");
@@ -668,6 +629,7 @@ async fn transcribe_via_remote(
     let fname_owned = filename.clone();
     let app_clone = app.clone();
     let lang_owned = language.to_string();
+    let request_timeout_secs = config.whisper.request_timeout_secs;
     let result = tokio::task::spawn_blocking(move || {
         // 進捗付きリーダ
         struct ProgressReader {
@@ -737,7 +699,7 @@ async fn transcribe_via_remote(
         }
 
         let client = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(config.whisper.request_timeout_secs))
+            .timeout(std::time::Duration::from_secs(request_timeout_secs))
             .build()
             .map_err(|e| format!("HTTPクライアント初期化に失敗しました: {}", e))?;
         let resp = client

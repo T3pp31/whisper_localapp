@@ -1,3 +1,4 @@
+//! シグナリング処理のエラー定義
 use thiserror::Error;
 
 #[derive(Debug, Error)]

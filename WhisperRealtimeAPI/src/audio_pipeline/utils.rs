@@ -1,3 +1,4 @@
+/// インターリーブされた i16 PCM をモノラル f32(-1.0..1.0) に変換
 pub fn interleaved_to_mono(samples: &[i16], channels: u8) -> Vec<f32> {
     if channels == 0 {
         return Vec::new();

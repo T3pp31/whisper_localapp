@@ -31,7 +31,7 @@ fn loads_config_from_env_dir() {
 
     let cfg = ConfigSet::load_from_env().expect("load config from env");
     assert_eq!(cfg.root(), tmp.as_path());
-    assert!(!cfg.server.ws_bind_addr.is_empty());
+    assert!(!cfg.server.http_bind_addr.is_empty());
     assert!(!cfg.server.asr_grpc_bind_addr.is_empty());
     assert!(!cfg.asr.service.endpoint.is_empty());
 }

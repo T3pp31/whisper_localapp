@@ -1,3 +1,4 @@
+/// 単純な線形補間ベースのリサンプラ
 #[derive(Debug, Clone)]
 pub struct LinearResampler {
     input_rate: u32,
@@ -5,6 +6,7 @@ pub struct LinearResampler {
 }
 
 impl LinearResampler {
+    /// 入出力サンプルレートを指定して作成
     pub fn new(input_rate: u32, output_rate: u32) -> Self {
         Self {
             input_rate,
@@ -12,6 +14,7 @@ impl LinearResampler {
         }
     }
 
+    /// 線形補間によりリサンプル
     pub fn resample(&self, samples: &[f32]) -> Vec<f32> {
         if self.input_rate == self.output_rate || samples.is_empty() {
             return samples.to_vec();

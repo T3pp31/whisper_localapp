@@ -3,6 +3,7 @@ use std::path::Path;
 use crate::asr::AsrError;
 use crate::config::WhisperModelConfig;
 
+/// whisper.cpp ベースのローカル推論エンジン
 #[derive(Debug)]
 pub struct WhisperEngine {
     ctx: whisper_rs::WhisperContext,
@@ -10,6 +11,7 @@ pub struct WhisperEngine {
 }
 
 impl WhisperEngine {
+    /// モデル設定からエンジンをロード
     pub fn load(cfg: WhisperModelConfig) -> Result<Self, AsrError> {
         let path = Path::new(&cfg.model_path);
         let path_str = path.to_str().ok_or_else(|| AsrError::Processing { message: "invalid model path".to_string() })?;

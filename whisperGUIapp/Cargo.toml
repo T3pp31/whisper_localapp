@@ -4,8 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["custom-protocol"]
+default = ["tauri-app", "custom-protocol", "realtime-audio"]
+tauri-app = ["tauri"]
 custom-protocol = ["tauri/custom-protocol"]
+# 実時間オーディオ入出力を有効化（CPAL/ALSA 等のシステム依存ライブラリが必要）
+realtime-audio = ["cpal"]
 
 [build-dependencies]
 tauri-build = { version = "1.5", features = [] }
@@ -19,13 +22,15 @@ rubato = "0.14"
 toml = "0.8"
 whisper-rs = "0.11"
 reqwest = { version = "0.11", features = ["blocking", "multipart", "json"] }
-tauri = { version = "1.5", features = [ "fs-write-file", "dialog-open", "dialog-ask", "fs-read-file", "fs-create-dir", "dialog-confirm", "fs-copy-file", "dialog-message", "shell-open", "path-all", "fs-rename-file", "clipboard-all", "fs-remove-dir", "fs-remove-file", "fs-exists", "dialog-save"] }
+tauri = { version = "1.5", optional = true, features = [ "fs-write-file", "dialog-open", "dialog-ask", "fs-read-file", "fs-create-dir", "dialog-confirm", "fs-copy-file", "dialog-message", "shell-open", "path-all", "fs-rename-file", "clipboard-all", "fs-remove-dir", "fs-remove-file", "fs-exists", "dialog-save"] }
 tokio = { version = "1.0", features = ["full"] }
 crossbeam-channel = "0.5"
 chrono = { version = "0.4", features = ["clock"] }
 dirs-next = "2"
-cpal = "0.15"
+cpal = { version = "0.15", optional = true }
 once_cell = "1.19"
+
+
 
 [target.'cfg(target_os = "windows")'.dependencies]
 rfd = { version = "0.12", default-features = false }

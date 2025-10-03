@@ -1,3 +1,4 @@
+//! トランスポート層のエラー定義
 use thiserror::Error;
 
 #[derive(Debug, Error)]

@@ -1,3 +1,4 @@
+//! 音声処理に関する設定値
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -9,11 +10,13 @@ pub struct AudioProcessingConfig {
 }
 
 impl AudioProcessingConfig {
+    /// ターゲットの1フレームあたりサンプル数を計算
     pub fn target_frame_samples(&self) -> usize {
         (self.target.sample_rate_hz as f32 * self.frame_assembler.frame_duration_ms as f32 / 1000.0)
             as usize
     }
 
+    /// 入力の1フレームあたりサンプル数を計算
     pub fn input_frame_samples(&self) -> usize {
         (self.input.sample_rate_hz as f32 * self.frame_assembler.frame_duration_ms as f32 / 1000.0)
             as usize

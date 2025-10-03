@@ -1,3 +1,4 @@
+//! システム要件・対応クライアント・ネットワーク要件などの設定
 use serde::Deserialize;
 use version_compare::Version;
 
@@ -11,6 +12,7 @@ pub struct SystemRequirements {
 }
 
 impl SystemRequirements {
+    /// ブラウザ名/バージョンが最小要件を満たすか
     pub fn is_browser_supported(&self, name: &str, version: &str) -> bool {
         self.supported_clients
             .browsers
@@ -19,6 +21,7 @@ impl SystemRequirements {
             .any(|client| version_meets(&client.min_version, version))
     }
 
+    /// モバイルOS/バージョンが最小要件を満たすか
     pub fn is_mobile_supported(&self, os: &str, version: &str) -> bool {
         self.supported_clients
             .mobile
@@ -99,6 +102,7 @@ pub struct TokenConfig {
     pub audience: String,
 }
 
+/// バージョン文字列が最小要件以上か（`version_compare` が解釈できない場合は文字列比較）
 fn version_meets(min_required: &str, current: &str) -> bool {
     match (Version::from(min_required), Version::from(current)) {
         (Some(min_v), Some(cur_v)) => cur_v >= min_v,

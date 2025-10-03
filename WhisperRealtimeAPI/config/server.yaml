@@ -1,2 +1,2 @@
-ws_bind_addr: "127.0.0.1:8081"
+http_bind_addr: "127.0.0.1:8080"
 asr_grpc_bind_addr: "127.0.0.1:50051"

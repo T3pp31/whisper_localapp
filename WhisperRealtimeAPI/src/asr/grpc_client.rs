@@ -57,6 +57,10 @@ impl GrpcAsrClient {
     }
 
     /// ストリーミング文字起こしを開始
+    ///
+    /// 引数:
+    /// - `audio_rx`: i16 LE エンコード済みのPCMバイト列（`bytes::Bytes`）を受け取るチャネル
+    ///   を想定した送受信の受信側。内部で gRPC に多重化して送信します。
     pub async fn start_streaming(
         &mut self,
         audio_rx: mpsc::Receiver<Bytes>,
@@ -145,6 +149,7 @@ pub struct GrpcAsrClientAdapter {
 }
 
 impl GrpcAsrClientAdapter {
+    /// 所有する `GrpcAsrClient` からアダプタを生成
     pub fn from_client(client: GrpcAsrClient) -> Self {
         Self { inner: std::sync::Arc::new(tokio::sync::Mutex::new(client)) }
     }

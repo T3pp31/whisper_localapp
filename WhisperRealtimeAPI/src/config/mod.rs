@@ -1,3 +1,7 @@
+//! 設定モジュール（YAML 読み込み）
+//!
+//! `ConfigSet` はルートディレクトリ配下の複数YAMLファイルを読み込み、
+//! 実行時に必要な設定値を型安全に提供します。
 mod asr;
 mod audio;
 mod error;
@@ -19,8 +23,10 @@ pub use server::*;
 pub use whisper::*;
 pub use system::*;
 
+/// 設定ディレクトリを指す環境変数名
 pub const CONFIG_DIR_ENV: &str = "WHISPER_REALTIME_CONFIG_DIR";
 
+/// すべての設定をひとまとめにした構造体
 #[derive(Debug, Clone)]
 pub struct ConfigSet {
     pub system: SystemRequirements,
@@ -33,6 +39,7 @@ pub struct ConfigSet {
 }
 
 impl ConfigSet {
+    /// ルートディレクトリから各YAMLを読み込み
     pub fn load_from_dir<P: AsRef<Path>>(dir: P) -> Result<Self, ConfigError> {
         let root = dir.as_ref().to_path_buf();
         if !root.is_dir() {
@@ -57,16 +64,19 @@ impl ConfigSet {
         })
     }
 
+    /// 環境変数（未設定時は `config/`）から設定を読み込み
     pub fn load_from_env() -> Result<Self, ConfigError> {
         let dir = std::env::var(CONFIG_DIR_ENV).unwrap_or_else(|_| "config".to_string());
         Self::load_from_dir(dir)
     }
 
+    /// 設定ルートのパス（デバッグ等に利用）
     pub fn root(&self) -> &Path {
         &self.root
     }
 }
 
+/// YAMLファイルを読み込み、型 `T` へデシリアライズ
 fn load_yaml<T>(path: PathBuf) -> Result<T, ConfigError>
 where
     T: DeserializeOwned,

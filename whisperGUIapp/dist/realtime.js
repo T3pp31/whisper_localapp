@@ -12,9 +12,13 @@
   const $partial = el('rt-partial');
   const $final = el('rt-final');
   const $device = el('rt-device');
+  const $model = el('rt-model');
+  const $browseModel = el('rt-browse-model');
   const $language = el('rt-language');
   const $threads = el('rt-threads');
   const $threadsMax = el('rt-threads-max');
+  const $switchModel = el('rt-switch-model');
+  let selectedModelPath = null; // 参照で直接指定した場合に使用
 
   const setStatus = (txt)=>{ $status.textContent = txt; };
   const setRunning = (running)=>{
@@ -83,6 +87,33 @@
     }
   }
 
+  async function populateModels(){
+    if (!$model) return;
+    $model.innerHTML = '';
+    const optNone = document.createElement('option');
+    optNone.value = '';
+    optNone.textContent = '未選択 (現在の設定)';
+    $model.appendChild(optNone);
+    try {
+      const models = await invoke('get_available_models');
+      if (Array.isArray(models)) {
+        for (const m of models) {
+          const opt = document.createElement('option');
+          opt.value = m.id;
+          opt.textContent = `${m.label}${m.downloaded ? '' : ' (未ダウンロード)'}`;
+          $model.appendChild(opt);
+          if (m.current) {
+            $model.value = m.id;
+          }
+        }
+      }
+    } catch(e) {
+      // ignore
+    }
+    // モデル選択時は参照指定をクリア
+    $model.addEventListener('change', ()=>{ selectedModelPath = null; });
+  }
+
   async function initThreads(){
     if (!$threads) return;
     try {
@@ -106,7 +137,9 @@
       const language = ($language && $language.value) ? $language.value : null;
       const t = $threads ? parseInt($threads.value, 10) : NaN;
       const threads = Number.isFinite(t) && t > 0 ? t : null;
-      await invoke('realtime_start', { device, language, threads });
+      const model_id = ($model && $model.value) ? ($model.value || null) : null;
+      const model_path = selectedModelPath;
+      await invoke('realtime_start', { device, language, threads, model_id, model_path });
     } catch(e) {
       setStatus('error: ' + (e && e.toString ? e.toString() : e));
       setRunning(false);
@@ -122,5 +155,39 @@
 
   initListeners();
   populateDevices();
+  populateModels();
   initThreads();
+
+  if ($browseModel) {
+    $browseModel.addEventListener('click', async ()=>{
+      try {
+        const p = await invoke('select_model_file');
+        if (p) {
+          selectedModelPath = p;
+          if ($model) $model.value = '';
+        }
+      } catch(e) {
+        // ignore
+      }
+    });
+  }
+
+  if ($switchModel) {
+    $switchModel.addEventListener('click', async ()=>{
+      try {
+        if ($model && $model.value) {
+          const modelId = $model.value;
+          const msg = await invoke('select_model', { modelId });
+          setStatus(msg || 'switched');
+          await populateModels();
+        } else if (selectedModelPath) {
+          setStatus('モデルIDを選択してください（参照はリアルタイムのみ適用）');
+        } else {
+          setStatus('モデルが未選択です');
+        }
+      } catch(e) {
+        setStatus('error: ' + (e && e.toString ? e.toString() : e));
+      }
+    });
+  }
 })();

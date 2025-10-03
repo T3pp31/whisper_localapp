@@ -1,3 +1,4 @@
+//! 設定読み込み時のエラー定義
 use std::path::PathBuf;
 
 use thiserror::Error;

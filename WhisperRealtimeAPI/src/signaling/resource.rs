@@ -1,3 +1,4 @@
+//! セッション数の上限管理とタイムアウトを行う簡易リソースマネージャ
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 

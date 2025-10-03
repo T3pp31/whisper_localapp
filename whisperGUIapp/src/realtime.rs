@@ -7,8 +7,11 @@ use std::sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::config::Config;
+use crate::models;
 use crate::whisper::WhisperEngine;
+#[cfg(feature = "realtime-audio")]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+#[cfg(feature = "tauri-app")]
 use tauri::Manager;
 
 static MANAGER: OnceCell<Mutex<RealtimeManager>> = OnceCell::new();
@@ -46,7 +49,8 @@ impl RealtimeManager {
         RealtimeStatus { running, phase: if running { "running".into() } else { "stopped".into() }, message: None }
     }
 
-    pub fn start(&mut self, app: tauri::AppHandle, device_name: Option<String>, language: Option<String>, threads: Option<usize>) -> Result<()> {
+    #[cfg(all(feature = "realtime-audio", feature = "tauri-app"))]
+    pub fn start(&mut self, app: tauri::AppHandle, device_name: Option<String>, language: Option<String>, threads: Option<usize>, model_id: Option<String>, model_path: Option<String>) -> Result<()> {
         if self.running.load(Ordering::SeqCst) {
             return Ok(());
         }
@@ -64,6 +68,8 @@ impl RealtimeManager {
         let device_name_clone = device_name.clone();
         let language_override = language.clone();
         let threads_override = threads.clone();
+        let model_id_override = model_id.clone();
+        let model_path_override = model_path.clone();
 
         self.recog_thread = Some(std::thread::spawn(move || {
             // Load config and engine inside thread (avoid Send bound issues)
@@ -78,7 +84,20 @@ impl RealtimeManager {
                     return;
                 }
             };
-            let mut engine = match WhisperEngine::new(&cfg.whisper.model_path, &cfg) {
+            // モデルパスの決定（オーバーライド優先）
+            let resolved_model_path = match resolve_realtime_model_path(&cfg, model_id_override.as_deref(), model_path_override.as_deref()) {
+                Ok(p) => p,
+                Err(e) => {
+                    let _ = app_clone.emit_all("realtime-status", serde_json::json!({
+                        "phase": "error",
+                        "message": format!("モデルパス解決失敗: {}", e)
+                    }));
+                    running2.store(false, Ordering::SeqCst);
+                    return;
+                }
+            };
+
+            let mut engine = match WhisperEngine::new(&resolved_model_path, &cfg) {
                 Ok(e) => e,
                 Err(e) => {
                     let _ = app_clone.emit_all("realtime-status", serde_json::json!({
@@ -265,6 +284,7 @@ impl RealtimeManager {
         Ok(())
     }
 
+    #[cfg(all(feature = "realtime-audio", feature = "tauri-app"))]
     pub fn stop(&mut self, app: tauri::AppHandle) -> Result<()> {
         if !self.running.load(Ordering::SeqCst) { return Ok(()); }
         self.running.store(false, Ordering::SeqCst);
@@ -273,6 +293,7 @@ impl RealtimeManager {
         Ok(())
     }
 
+    #[cfg(feature = "tauri-app")]
     fn emit_status(&self, app: &tauri::AppHandle, phase: &str, message: Option<String>) {
         let _ = app.emit_all("realtime-status", serde_json::json!({
             "phase": phase,
@@ -281,6 +302,7 @@ impl RealtimeManager {
     }
 }
 
+#[cfg(feature = "realtime-audio")]
 fn build_stream_f32(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
@@ -308,6 +330,7 @@ fn build_stream_f32(
     Ok(stream)
 }
 
+#[cfg(feature = "realtime-audio")]
 fn build_stream_i16(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
@@ -337,6 +360,7 @@ fn build_stream_i16(
     Ok(stream)
 }
 
+#[cfg(feature = "realtime-audio")]
 fn build_stream_u16(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
@@ -390,18 +414,21 @@ fn resample_mono(samples: Vec<f32>, input_rate: f64, output_rate: f64) -> Result
 }
 
 // ===== Tauri commands =====
+#[cfg(all(feature = "tauri-app", feature = "realtime-audio"))]
 #[tauri::command]
-pub fn realtime_start(app: tauri::AppHandle, device: Option<String>, language: Option<String>, threads: Option<usize>) -> Result<(), String> {
+pub fn realtime_start(app: tauri::AppHandle, device: Option<String>, language: Option<String>, threads: Option<usize>, model_id: Option<String>, model_path: Option<String>) -> Result<(), String> {
     let mut mgr = manager().lock().map_err(|_| "manager lock failed")?;
-    mgr.start(app, device, language, threads).map_err(|e| e.to_string())
+    mgr.start(app, device, language, threads, model_id, model_path).map_err(|e| e.to_string())
 }
 
+#[cfg(all(feature = "tauri-app", feature = "realtime-audio"))]
 #[tauri::command]
 pub fn realtime_stop(app: tauri::AppHandle) -> Result<(), String> {
     let mut mgr = manager().lock().map_err(|_| "manager lock failed")?;
     mgr.stop(app).map_err(|e| e.to_string())
 }
 
+#[cfg(all(feature = "tauri-app", feature = "realtime-audio"))]
 #[tauri::command]
 pub fn realtime_status() -> Result<RealtimeStatus, String> {
     let mgr = manager().lock().map_err(|_| "manager lock failed")?;
@@ -409,6 +436,7 @@ pub fn realtime_status() -> Result<RealtimeStatus, String> {
 }
 
 /// 入力デバイス名の一覧を返す（既定デバイスは先頭に含めず、UI側で「既定」を用意する想定）。
+#[cfg(all(feature = "tauri-app", feature = "realtime-audio"))]
 #[tauri::command]
 pub fn list_input_devices() -> Result<Vec<String>, String> {
     let host = cpal::default_host();
@@ -424,4 +452,58 @@ pub fn list_input_devices() -> Result<Vec<String>, String> {
         }
         Err(e) => Err(format!("入力デバイス列挙に失敗しました: {}", e)),
     }
+}
+
+// --- Stubs when realtime-audio feature is disabled (for CI/test environments) ---
+#[cfg(all(feature = "tauri-app", not(feature = "realtime-audio")))]
+#[tauri::command]
+pub fn realtime_start(_app: tauri::AppHandle, _device: Option<String>, _language: Option<String>, _threads: Option<usize>, _model_id: Option<String>, _model_path: Option<String>) -> Result<(), String> {
+    Err("realtime-audio 機能が無効のため利用できません".into())
+}
+
+#[cfg(all(feature = "tauri-app", not(feature = "realtime-audio")))]
+#[tauri::command]
+pub fn realtime_stop(_app: tauri::AppHandle) -> Result<(), String> { Ok(()) }
+
+#[cfg(all(feature = "tauri-app", not(feature = "realtime-audio")))]
+#[tauri::command]
+pub fn realtime_status() -> Result<RealtimeStatus, String> { Ok(RealtimeStatus { running: false, phase: "stopped".into(), message: None }) }
+
+#[cfg(all(feature = "tauri-app", not(feature = "realtime-audio")))]
+#[tauri::command]
+pub fn list_input_devices() -> Result<Vec<String>, String> { Ok(Vec::new()) }
+
+/// リアルタイム処理時に使用するモデルパスを解決する。
+/// 優先順位: model_path (直接指定) > model_id (カタログ) > cfg.whisper.model_path
+pub fn resolve_realtime_model_path(cfg: &Config, model_id: Option<&str>, model_path: Option<&str>) -> Result<String> {
+    use std::path::Path;
+
+    if let Some(p) = model_path {
+        let p = p.trim();
+        if !p.is_empty() {
+            if Path::new(p).exists() {
+                return Ok(p.to_string());
+            } else {
+                return Err(anyhow::anyhow!("指定モデルファイルが見つかりません: {}", p));
+            }
+        }
+    }
+
+    if let Some(id) = model_id {
+        let id = id.trim();
+        if !id.is_empty() {
+            if let Some(def) = models::get_model_definition(id) {
+                let p = std::path::Path::new(&cfg.paths.models_dir).join(def.filename);
+                if p.exists() {
+                    return Ok(p.to_string_lossy().to_string());
+                } else {
+                    return Err(anyhow::anyhow!("モデルが未ダウンロードです: {}", def.filename));
+                }
+            } else {
+                return Err(anyhow::anyhow!("未知のモデルID: {}", id));
+            }
+        }
+    }
+
+    Ok(cfg.whisper.model_path.clone())
 }

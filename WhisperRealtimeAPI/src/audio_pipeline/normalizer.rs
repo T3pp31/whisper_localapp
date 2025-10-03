@@ -1,3 +1,4 @@
+/// RMSに基づくレベル正規化＋簡易リミッタ
 #[derive(Debug, Clone)]
 pub struct LevelNormalizer {
     target_rms: f32,
@@ -5,6 +6,7 @@ pub struct LevelNormalizer {
 }
 
 impl LevelNormalizer {
+    /// 目標RMS(dB)とリミッタ閾値(dB)を指定
     pub fn new(target_rms_db: f32, limiter_threshold_db: f32) -> Self {
         Self {
             target_rms: db_to_linear(target_rms_db),
@@ -12,6 +14,7 @@ impl LevelNormalizer {
         }
     }
 
+    /// 現在のRMSに応じてゲインを適用し、クリップを防ぐため閾値でクランプ
     pub fn normalize(&self, samples: &[f32]) -> Vec<f32> {
         if samples.is_empty() {
             return Vec::new();
@@ -33,10 +36,12 @@ impl LevelNormalizer {
     }
 }
 
+/// dB表記を線形ゲインへ変換
 fn db_to_linear(db: f32) -> f32 {
     10_f32.powf(db / 20.0)
 }
 
+/// RMS(二乗平均平方根) を計算
 fn root_mean_square(samples: &[f32]) -> f32 {
     let sum = samples.iter().map(|s| s * s).sum::<f32>();
     (sum / samples.len() as f32).sqrt()
