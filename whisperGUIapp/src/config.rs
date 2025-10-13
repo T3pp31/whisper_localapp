@@ -25,6 +25,10 @@ pub struct WhisperConfig {
     pub model_path: String,
     pub default_model: String,
     pub language: String,
+    /// ローカルGPUを使用するかどうか（旧：リモートサーバ利用フラグ）
+    #[serde(default)]
+    pub use_gpu: bool,
+    /// 旧バージョン互換用（非推奨）
     #[serde(default)]
     pub use_remote_server: bool,
     #[serde(default = "default_remote_server_url")]
@@ -59,6 +63,8 @@ pub struct GuiConfig {
 pub struct PerformanceConfig {
     pub audio_threads: usize,
     pub whisper_threads: usize,
+    /// 旧設定（非推奨: whisper.use_gpuに移行）
+    #[serde(default)]
     pub use_gpu: bool,
 }
 
@@ -149,6 +155,7 @@ impl Default for Config {
                 model_path: "models/ggml-base.bin".to_string(),
                 default_model: "base".to_string(),
                 language: "ja".to_string(),
+                use_gpu: false,
                 use_remote_server: false,
                 remote_server_url: default_remote_server_url(),
                 remote_server_endpoint: default_remote_server_endpoint(),

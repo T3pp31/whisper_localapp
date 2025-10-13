@@ -64,9 +64,11 @@ struct TranscriptionResult {
     segments: usize,
 }
 
-/// リモート GPU サーバ設定のシリアライズ用。
+/// GPU設定のシリアライズ用（旧リモートサーバ設定との互換性を保つ）。
 #[derive(Serialize, Deserialize)]
-struct RemoteServerSettings {
+struct GpuSettings {
+    use_gpu: bool,
+    // 旧バージョン互換用（非推奨）
     use_remote_server: bool,
     remote_server_url: String,
     remote_server_endpoint: String,
@@ -356,7 +358,8 @@ async fn start_transcription(
         config.clone()
     };
 
-    // リモート GPU サーバを利用する場合は HTTP 経由で実行
+    // 旧バージョン互換：use_remote_serverが設定されている場合はリモートサーバ経由で実行
+    // 新バージョンではuse_gpuのみを使用し、ローカルGPU処理を行う
     if config_snapshot.whisper.use_remote_server {
         // キャッシュのスナップショット（リモート送信時の最適化用）
         let cached_opt = match state.cached_audio.lock() {
@@ -816,35 +819,53 @@ fn guess_mime_from_filename(name: &str) -> Option<String> {
     Some(m.to_string())
 }
 
-/// リモート GPU サーバ設定の取得。
+/// GPU設定の取得（旧リモートサーバ設定との互換性を保つ）。
 #[tauri::command]
-fn get_remote_server_settings(state: State<'_, AppState>) -> Result<RemoteServerSettings, String> {
+fn get_gpu_settings(state: State<'_, AppState>) -> Result<GpuSettings, String> {
     let cfg = state.config.lock().map_err(|_| "設定の読み込みに失敗しました")?;
-    Ok(RemoteServerSettings {
+    Ok(GpuSettings {
+        use_gpu: cfg.whisper.use_gpu,
         use_remote_server: cfg.whisper.use_remote_server,
         remote_server_url: cfg.whisper.remote_server_url.clone(),
         remote_server_endpoint: cfg.whisper.remote_server_endpoint.clone(),
     })
 }
 
-/// リモート GPU サーバ設定の更新（保存し、ローカルエンジンをリセット）。
+/// 旧コマンド名との互換性を保つため
 #[tauri::command]
-async fn update_remote_server_settings(use_remote_server: bool, remote_server_url: String, remote_server_endpoint: String, state: State<'_, AppState>) -> Result<(), String> {
+fn get_remote_server_settings(state: State<'_, AppState>) -> Result<GpuSettings, String> {
+    get_gpu_settings(state)
+}
+
+/// GPU設定の更新（保存し、ローカルエンジンをリセット）。
+#[tauri::command]
+async fn update_gpu_settings(use_gpu: bool, use_remote_server: bool, remote_server_url: String, remote_server_endpoint: String, state: State<'_, AppState>) -> Result<(), String> {
     // URL は空白をトリム
     let url = remote_server_url.trim().to_string();
     let ep = remote_server_endpoint.trim().to_string();
     let mut cfg = state.config.lock().map_err(|_| "設定の更新に失敗しました")?;
+
+    cfg.whisper.use_gpu = use_gpu;
     cfg.whisper.use_remote_server = use_remote_server;
     if !url.is_empty() { cfg.whisper.remote_server_url = url; }
     if !ep.is_empty() { cfg.whisper.remote_server_endpoint = ep; }
+
     #[cfg(not(debug_assertions))]
     {
         cfg.save().map_err(|e| format!("設定の保存に失敗しました: {}", e))?;
     }
-    // ローカルエンジンは未使用/切替のため破棄
+
+    // ローカルエンジンは設定変更のため破棄（次回実行時に再初期化）
     let mut engine = state.whisper_engine.lock().map_err(|_| "エンジンのリセットに失敗しました")?;
     *engine = None;
     Ok(())
+}
+
+/// 旧コマンド名との互換性を保つため
+#[tauri::command]
+async fn update_remote_server_settings(use_remote_server: bool, remote_server_url: String, remote_server_endpoint: String, state: State<'_, AppState>) -> Result<(), String> {
+    // 旧バージョン互換：use_gpuはfalse固定
+    update_gpu_settings(false, use_remote_server, remote_server_url, remote_server_endpoint, state).await
 }
 
 /// 結果テキストをクリップボードへコピー。
@@ -1225,7 +1246,9 @@ fn main() {
             get_performance_info,
             update_whisper_threads,
             start_transcription,
+            get_gpu_settings,
             get_remote_server_settings,
+            update_gpu_settings,
             update_remote_server_settings,
             copy_to_clipboard,
             get_available_models,

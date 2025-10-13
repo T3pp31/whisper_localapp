@@ -17,6 +17,7 @@ Whisper.cpp（whisper-rs）を用いてローカルで音声を文字起こし�
 - プレビュー再生: 16kHz モノラル WAV を一時生成して安定再生（失敗時はフォールバック）
 - モデル管理: カタログから選択・切替、1件DL / 未DL一括DL、進捗表示
 - 言語設定: 自動検出/ja/en/zh/ko、英語翻訳トグル
+- GPU加速: ローカルPCのGPU（CUDA/Metal/Vulkan/hipBLAS）を使用した高速推論に対応
 - 結果表示: タイムスタンプ付き、クリック再生、編集モード、クリップボードへコピー
 
 ## アーキテクチャ概要
@@ -91,6 +92,8 @@ whisperGUIapp/
 
 ## 実行/ビルド/配布
 
+### CPU版（デフォルト）
+
 ```bash
 cd whisperGUIapp
 
@@ -101,6 +104,34 @@ cargo tauri dev
 cargo tauri build
 ```
 
+### GPU対応版
+
+GPU加速を有効化してビルドするには、プラットフォームに応じた機能フラグを指定します：
+
+```bash
+# CUDA (NVIDIA GPU)
+cargo tauri build --features gpu-cuda
+
+# Metal (Apple Silicon / macOS)
+cargo tauri build --features gpu-metal
+
+# Vulkan (クロスプラットフォーム)
+cargo tauri build --features gpu-vulkan
+
+# hipBLAS (AMD GPU / Linux)
+cargo tauri build --features gpu-hipblas
+```
+
+**前提条件:**
+- CUDA: CUDA Toolkit（nvcc、cuBLAS）がインストールされ、環境変数が設定されている
+- Metal: Xcode Command Line Toolsがインストールされている
+- Vulkan: Vulkan SDKがインストールされている
+- hipBLAS: ROCmツールチェーンとhipblas開発パッケージ（Linux）
+
+GPU版でビルドした後、アプリの「GPUを利用」トグルをONにすると、ローカルPCのGPUで高速推論が可能です。
+
+### その他
+
 - 既定のターゲットは `nsis`（`.exe` インストーラ）。MSI が必要なら `tauri.conf.json` の `tauri.bundle.targets` に `"msi"` を追加。
 - 生成物の例: `target/release/bundle/nsis/`（NSIS）, `.../msi/`（MSI）
 - モデル同梱は `tauri.bundle.resources` に `.bin` を列挙してください（例: `models/ggml-large-v3-turbo-q5_0.bin`）。
@@ -110,6 +141,7 @@ cargo tauri build
 - 「音声ファイルを選択」→「読み込み」でプレビューを準備・再生が可能
 - 「音声の言語」から `自動/ja/en/zh/ko` を選択し、「英語に翻訳」トグルで英訳しながら書き起こし
 - 「カタログから選択」→「モデル切替」でモデル変更。未取得は「モデルをダウンロード」または「未DLをまとめてDL」
+- **「GPUを利用」トグル**をONにすると、ローカルPCのGPUで高速推論を実行（GPU対応版ビルドが必要）
 - 「文字起こし開始」で推論実行。結果はタイムスタンプ付きで表示され、「クリック再生」ON で該当行から再生
 - 「解析結果をコピー」で結果全文をクリップボードへ
 - 範囲スライダ UI は先行実装（現時点では全体を解析）
@@ -117,7 +149,8 @@ cargo tauri build
 ## パフォーマンスのヒント
 
 - リリースビルドを使用（`cargo tauri build`）
-- `performance.whisper_threads` を CPU コア数に合わせて調整
+- **GPU版でビルド**して「GPUを利用」をONにすると、CPU版の数倍〜10倍以上高速化
+- CPU版の場合、`performance.whisper_threads` を CPU コア数に合わせて調整（UIの「使用CPU数」で変更可能）
 - `-C target-cpu=native` を付与すると SIMD が有効化され高速化する場合あり
 - 軽量/量子化モデル（`tiny/base/small` や `*-q5_0`）は高速（精度は低下）
 

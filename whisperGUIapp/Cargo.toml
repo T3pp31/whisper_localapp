@@ -7,6 +7,11 @@ edition = "2021"
 default = ["tauri-app", "custom-protocol"]
 tauri-app = ["tauri"]
 custom-protocol = ["tauri/custom-protocol"]
+# GPU加速のオプション機能（使用するプラットフォームに合わせて有効化）
+gpu-cuda = ["whisper-rs/cuda"]
+gpu-metal = ["whisper-rs/metal"]
+gpu-vulkan = ["whisper-rs/vulkan"]
+gpu-hipblas = ["whisper-rs/hipblas"]
 
 [build-dependencies]
 tauri-build = { version = "1.5", features = [] }

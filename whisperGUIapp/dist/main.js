@@ -11,6 +11,7 @@ class WhisperApp {
         this.isClickPlay = false;
         this.selectedLanguage = 'ja';
         this.translateToEnglish = false;
+        this.useGpu = false;
         this.useRemoteServer = false;
         this.serverUrl = '';
         this.serverEndpoint = '';
@@ -31,7 +32,7 @@ class WhisperApp {
         this.initializeElements();
         this.attachEventListeners();
         this.loadAvailableModels();
-        this.loadRemoteServerSettings();
+        this.loadGpuSettings();
         this.loadPerformanceSettings();
         this.addLog('準備完了');
     }
@@ -66,6 +67,7 @@ class WhisperApp {
         this.taskProgressText = document.getElementById('task-progress-text');
         this.languageSelect = document.getElementById('language-select');
         this.translateToggle = document.getElementById('translate-toggle');
+        this.useGpuToggle = document.getElementById('use-gpu-toggle');
         this.useGpuServerToggle = document.getElementById('use-gpu-server-toggle');
         this.serverUrlInput = document.getElementById('server-url-input');
         this.startTranscriptionBtn = document.getElementById('start-transcription');
@@ -238,10 +240,17 @@ class WhisperApp {
         }
         this.languageSelect.addEventListener('change', (e) => this.changeLanguage(e.target.value));
         this.translateToggle.addEventListener('change', (e) => this.toggleTranslation(e.target.checked));
+        if (this.useGpuToggle) {
+            this.useGpuToggle.addEventListener('change', async (e) => {
+                this.useGpu = !!e.target.checked;
+                await this.updateGpuSettings();
+                this.addLog(`GPU: ${this.useGpu ? 'ON' : 'OFF'}`);
+            });
+        }
         if (this.useGpuServerToggle) {
             this.useGpuServerToggle.addEventListener('change', async (e) => {
                 this.useRemoteServer = !!e.target.checked;
-                await this.updateRemoteServerSettings();
+                await this.updateGpuSettings();
                 this.applyRemoteUiState();
                 this.addLog(`GPUサーバ: ${this.useRemoteServer ? 'ON' : 'OFF'}`);
             });
@@ -580,32 +589,64 @@ class WhisperApp {
 
     // 旧: 別ウィンドウ起動。タブ化したため未使用。
 
-    async loadRemoteServerSettings() {
+    async loadGpuSettings() {
         try {
-            const s = await invoke('get_remote_server_settings');
+            const s = await invoke('get_gpu_settings');
             if (s && typeof s === 'object') {
+                this.useGpu = !!s.useGpu || !!s.use_gpu;
                 this.useRemoteServer = !!s.useRemoteServer || !!s.use_remote_server;
                 this.serverUrl = s.remoteServerUrl || s.remote_server_url || '';
                 this.serverEndpoint = s.remoteServerEndpoint || s.remote_server_endpoint || '';
             }
-        } catch (_) {}
+        } catch (_) {
+            // フォールバック: 旧コマンド
+            try {
+                const s = await invoke('get_remote_server_settings');
+                if (s && typeof s === 'object') {
+                    this.useGpu = !!s.useGpu || !!s.use_gpu;
+                    this.useRemoteServer = !!s.useRemoteServer || !!s.use_remote_server;
+                    this.serverUrl = s.remoteServerUrl || s.remote_server_url || '';
+                    this.serverEndpoint = s.remoteServerEndpoint || s.remote_server_endpoint || '';
+                }
+            } catch (_) {}
+        }
         // 反映
+        if (this.useGpuToggle) this.useGpuToggle.checked = !!this.useGpu;
         if (this.useGpuServerToggle) this.useGpuServerToggle.checked = !!this.useRemoteServer;
         if (this.serverUrlInput) this.serverUrlInput.value = this.serverUrl || '';
         if (this.serverEndpointInput) this.serverEndpointInput.value = this.serverEndpoint || '';
         this.applyRemoteUiState();
     }
 
-    async updateRemoteServerSettings() {
+    async updateGpuSettings() {
         try {
-            await invoke('update_remote_server_settings', {
+            await invoke('update_gpu_settings', {
+                useGpu: !!this.useGpu,
                 useRemoteServer: !!this.useRemoteServer,
                 remoteServerUrl: (this.serverUrl || '').trim(),
                 remoteServerEndpoint: (this.serverEndpoint || '').trim()
             });
         } catch (error) {
-            this.addLog(`GPUサーバ設定の更新に失敗しました: ${error}`);
+            // フォールバック: 旧コマンド
+            try {
+                await invoke('update_remote_server_settings', {
+                    useRemoteServer: !!this.useRemoteServer,
+                    remoteServerUrl: (this.serverUrl || '').trim(),
+                    remoteServerEndpoint: (this.serverEndpoint || '').trim()
+                });
+            } catch (_) {}
+            this.addLog(`GPU設定の更新に失敗しました: ${error}`);
         }
+    }
+
+    async loadRemoteServerSettings() {
+        // 旧メソッド名との互換性のため残す
+        await this.loadGpuSettings();
+    }
+
+    async updateRemoteServerSettings() {
+        // 旧メソッド名との互換性のため残す
+        await this.updateGpuSettings();
     }
 
     applyRemoteUiState() {

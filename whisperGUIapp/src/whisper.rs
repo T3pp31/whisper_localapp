@@ -53,7 +53,16 @@ impl WhisperEngine {
         }
 
         // Whisperコンテキストの初期化
-        let ctx_params = WhisperContextParameters::default();
+        let mut ctx_params = WhisperContextParameters::default();
+
+        // GPU設定の適用
+        if config.whisper.use_gpu {
+            ctx_params.use_gpu(true);
+            eprintln!("GPU加速を有効化しました");
+        } else {
+            eprintln!("CPU推論を使用します");
+        }
+
         let context = WhisperContext::new_with_params(model_path, ctx_params)
             .map_err(|e| anyhow::anyhow!("Whisperコンテキストの初期化に失敗: {}", e))?;
 
