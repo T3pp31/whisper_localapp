@@ -621,18 +621,18 @@ class WhisperApp {
     async updateGpuSettings() {
         try {
             await invoke('update_gpu_settings', {
-                useGpu: !!this.useGpu,
-                useRemoteServer: !!this.useRemoteServer,
-                remoteServerUrl: (this.serverUrl || '').trim(),
-                remoteServerEndpoint: (this.serverEndpoint || '').trim()
+                use_gpu: !!this.useGpu,
+                use_remote_server: !!this.useRemoteServer,
+                remote_server_url: (this.serverUrl || '').trim(),
+                remote_server_endpoint: (this.serverEndpoint || '').trim()
             });
         } catch (error) {
             // フォールバック: 旧コマンド
             try {
                 await invoke('update_remote_server_settings', {
-                    useRemoteServer: !!this.useRemoteServer,
-                    remoteServerUrl: (this.serverUrl || '').trim(),
-                    remoteServerEndpoint: (this.serverEndpoint || '').trim()
+                    use_remote_server: !!this.useRemoteServer,
+                    remote_server_url: (this.serverUrl || '').trim(),
+                    remote_server_endpoint: (this.serverEndpoint || '').trim()
                 });
             } catch (_) {}
             this.addLog(`GPU設定の更新に失敗しました: ${error}`);
