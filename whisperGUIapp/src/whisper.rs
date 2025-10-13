@@ -98,19 +98,19 @@ impl WhisperEngine {
             .full(params, audio_data)
             .map_err(|e| anyhow::anyhow!("文字起こしに失敗: {}", e))?;
 
-        // 結果の取得
-        let segment_count = state
-            .full_n_segments()
-            .map_err(|e| anyhow::anyhow!("セグメント数の取得に失敗: {}", e))?;
+        // 結果の取得（0.15系ではfull_n_segments()は直接i32を返す）
+        let segment_count = state.full_n_segments();
 
         let mut result = String::new();
 
         for i in 0..segment_count {
-            let segment_text = state
-                .full_get_segment_text(i)
-                .map_err(|e| anyhow::anyhow!("セグメント{}のテキスト取得に失敗: {}", i, e))?;
-
-            result.push_str(&segment_text);
+            // 0.15系ではget_segment()を使用
+            if let Some(segment) = state.get_segment(i) {
+                let segment_text = segment
+                    .to_str()
+                    .map_err(|e| anyhow::anyhow!("セグメント{}のテキスト取得に失敗: {}", i, e))?;
+                result.push_str(segment_text);
+            }
         }
 
         // 結果の後処理
@@ -139,16 +139,16 @@ impl WhisperEngine {
             .full(params, audio_data)
             .map_err(|e| anyhow::anyhow!("文字起こしに失敗: {}", e))?;
 
-        let segment_count = state
-            .full_n_segments()
-            .map_err(|e| anyhow::anyhow!("セグメント数の取得に失敗: {}", e))?;
+        let segment_count = state.full_n_segments();
 
         let mut result = String::new();
         for i in 0..segment_count {
-            let segment_text = state
-                .full_get_segment_text(i)
-                .map_err(|e| anyhow::anyhow!("セグメント{}のテキスト取得に失敗: {}", i, e))?;
-            result.push_str(&segment_text);
+            if let Some(segment) = state.get_segment(i) {
+                let segment_text = segment
+                    .to_str()
+                    .map_err(|e| anyhow::anyhow!("セグメント{}のテキスト取得に失敗: {}", i, e))?;
+                result.push_str(segment_text);
+            }
         }
         let result = result.trim().to_string();
         if result.is_empty() {
@@ -178,30 +178,26 @@ impl WhisperEngine {
             .full(params, audio_data)
             .map_err(|e| anyhow::anyhow!("文字起こしに失敗: {}", e))?;
 
-        let segment_count = state
-            .full_n_segments()
-            .map_err(|e| anyhow::anyhow!("セグメント数の取得に失敗: {}", e))?;
+        let segment_count = state.full_n_segments();
 
         let mut segments = Vec::new();
 
         for i in 0..segment_count {
-            let text = state
-                .full_get_segment_text(i)
-                .map_err(|e| anyhow::anyhow!("セグメント{}のテキスト取得に失敗: {}", i, e))?;
+            if let Some(segment) = state.get_segment(i) {
+                let text = segment
+                    .to_str()
+                    .map_err(|e| anyhow::anyhow!("セグメント{}のテキスト取得に失敗: {}", i, e))?;
 
-            let start_time = state
-                .full_get_segment_t0(i)
-                .map_err(|e| anyhow::anyhow!("セグメント{}の開始時間取得に失敗: {}", i, e))?;
+                // 0.15系ではstart_timestamp/end_timestamp()を使用（centiseconds = 10ms単位）
+                let start_time = segment.start_timestamp();
+                let end_time = segment.end_timestamp();
 
-            let end_time = state
-                .full_get_segment_t1(i)
-                .map_err(|e| anyhow::anyhow!("セグメント{}の終了時間取得に失敗: {}", i, e))?;
-
-            segments.push(TranscriptionSegment {
-                text: text.trim().to_string(),
-                start_time_ms: start_time as u64 * 10, // centisecondsをミリ秒に変換
-                end_time_ms: end_time as u64 * 10,
-            });
+                segments.push(TranscriptionSegment {
+                    text: text.trim().to_string(),
+                    start_time_ms: start_time as u64 * 10, // centisecondsをミリ秒に変換
+                    end_time_ms: end_time as u64 * 10,
+                });
+            }
         }
 
         Ok(segments)

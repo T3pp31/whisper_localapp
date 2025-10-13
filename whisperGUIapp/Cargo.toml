@@ -23,7 +23,7 @@ serde_json = "1.0"
 symphonia = { version = "0.5", features = ["all-codecs", "all-formats"] }
 rubato = "0.14"
 toml = "0.8"
-whisper-rs = "0.11"
+whisper-rs = "0.15"
 reqwest = { version = "0.11", features = ["blocking", "multipart", "json"] }
 tauri = { version = "1.5", optional = true, features = [ "fs-write-file", "dialog-open", "dialog-ask", "fs-read-file", "fs-create-dir", "dialog-confirm", "fs-copy-file", "dialog-message", "shell-open", "path-all", "fs-rename-file", "clipboard-all", "fs-remove-dir", "fs-remove-file", "fs-exists", "dialog-save"] }
 tokio = { version = "1.0", features = ["full"] }
