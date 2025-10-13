@@ -11,7 +11,6 @@
 use whisperGUIapp::audio;
 use whisperGUIapp::config;
 use whisperGUIapp::models;
-use whisperGUIapp::realtime;
 use whisperGUIapp::whisper;
 
 use whisperGUIapp::audio::AudioProcessor;
@@ -1226,10 +1225,6 @@ fn main() {
             get_performance_info,
             update_whisper_threads,
             start_transcription,
-            realtime::realtime_start,
-            realtime::realtime_stop,
-            realtime::realtime_status,
-            realtime::list_input_devices,
             get_remote_server_settings,
             update_remote_server_settings,
             copy_to_clipboard,
