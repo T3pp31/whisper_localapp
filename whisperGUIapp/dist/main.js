@@ -55,11 +55,6 @@ class WhisperApp {
         this.switchModelButton = document.getElementById('switch-model-button');
         this.downloadModelButton = document.getElementById('download-model-button');
         this.downloadAllButton = document.getElementById('download-all-button');
-        // タブ
-        this.tabMain = document.getElementById('tab-main');
-        this.tabRealtime = document.getElementById('tab-realtime');
-        this.pageMain = document.getElementById('page-main');
-        this.pageRealtime = document.getElementById('page-realtime');
         this.downloadProgressRow = document.getElementById('download-progress-row');
         this.downloadProgress = document.getElementById('download-progress');
         this.downloadProgressText = document.getElementById('download-progress-text');
@@ -241,13 +236,6 @@ class WhisperApp {
         if (this.downloadAllButton) {
             this.downloadAllButton.addEventListener('click', () => this.downloadAllModels());
         }
-        // ビュー切替（タブ）
-        if (this.tabMain) {
-            this.tabMain.addEventListener('click', () => this.switchView('main'));
-        }
-        if (this.tabRealtime) {
-            this.tabRealtime.addEventListener('click', () => this.switchView('realtime'));
-        }
         this.languageSelect.addEventListener('change', (e) => this.changeLanguage(e.target.value));
         this.translateToggle.addEventListener('change', (e) => this.toggleTranslation(e.target.checked));
         if (this.useGpuServerToggle) {
@@ -382,14 +370,6 @@ class WhisperApp {
             // 失敗時は操作を戻す
             this.setUiLoadingAudio(false);
         }
-    }
-
-    switchView(which) {
-        const isRealtime = which === 'realtime';
-        if (this.pageMain) this.pageMain.style.display = isRealtime ? 'none' : '';
-        if (this.pageRealtime) this.pageRealtime.style.display = isRealtime ? '' : 'none';
-        if (this.tabMain) this.tabMain.classList.toggle('active', !isRealtime);
-        if (this.tabRealtime) this.tabRealtime.classList.toggle('active', isRealtime);
     }
 
     showMediaControls(metadata) {
