@@ -77,16 +77,19 @@ whisperGUIapp/
 ## セットアップ（Windows 11 想定）
 
 1) 必須ツール
+
 - Rust（1.75 以上）/ `cargo`
 - Microsoft Visual C++ Build Tools（`cl.exe`）
 - WebView2 Runtime（多くの Windows 11 に同梱）
 - 推奨: `cargo install tauri-cli --version ^1.5`
 
 2) モデルの用意
+
 - `models/` に ggml 形式の `.bin` を配置、またはアプリの DL 機能を使用
 - `./download_models.sh` で `tiny/base/small/medium/large-v3-turbo(-q5_0)` を一括取得可能
 
 3) 設定
+
 - `config.toml` の `whisper.model_path`・`performance.whisper_threads` などを確認
   - 実際の保存はユーザー領域に行われます（初回に自動作成/移行）
 
@@ -123,6 +126,7 @@ cargo tauri build --features gpu-hipblas
 ```
 
 **前提条件:**
+
 - CUDA: CUDA Toolkit（nvcc、cuBLAS）がインストールされ、環境変数が設定されている
 - Metal: Xcode Command Line Toolsがインストールされている
 - Vulkan: Vulkan SDKがインストールされている
@@ -163,3 +167,22 @@ GPU版でビルドした後、アプリの「GPUを利用」トグルをONにす
 
 Tauri 採用により、Windows ネイティブ配布（EXE/MSI）が容易です。モデル同梱と初回ダウンロードは配布ポリシーに応じて選択してください。
 
+# 1. 開発時（フロントエンド+バックエンドの動作確認）
+
+  cargo tauri dev
+
+# 2. リリース前のテスト（最適化ビルドで動作確認）
+
+  cargo tauri build --debug
+
+# 3. 最終リリースビルド（GPU版）
+
+  cargo tauri build --features gpu-cuda
+
+  インストーラーの場所
+
+  ビルド後のインストーラーは以下に生成されます：
+
+  target/release/bundle/
+  ├── nsis/              # Windows NSIS インストーラー (.exe)
+  └── msi/               # Windows MSI インストーラー (.msi)
