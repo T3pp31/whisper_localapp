@@ -83,17 +83,13 @@
                             <progress id="download-progress" max="100" value="0" style="width: 100%;"></progress>
                             <div id="download-progress-text" style="font-size: 12px; color: #555; margin-top: 4px;">-</div>
                         </div>
-                        <div class="gpu-server-row" style="margin-top: 12px; padding-top: 8px; border-top: 1px solid #eee;">
-                            <label class="toggle-switch" title="ローカルモデルの代わりにGPUサーバを利用します">
-                                <input type="checkbox" id="use-gpu-server-toggle">
+                        <div class="gpu-row" style="margin-top: 12px; padding-top: 8px; border-top: 1px solid #eee;">
+                            <label class="toggle-switch" title="ローカルPCのGPUを使用して推論を高速化します（GPU機能付きでビルドが必要）">
+                                <input type="checkbox" id="use-gpu-toggle">
                                 <span class="slider"></span>
-                                <span class="label">GPUサーバを利用</span>
+                                <span class="label">GPUを利用</span>
                             </label>
-                            <div class="server-url-row" style="margin-top: 8px; display: flex; gap: 8px; align-items: center;">
-                                <input type="text" id="server-url-input" placeholder="http://192.168.0.1:8080" style="flex: 1;">
-                                <input type="text" id="server-endpoint-input" placeholder="/transcribe-with-timestamps" style="width: 260px;" title="パスまたはフルURLを指定できます">
-                            </div>
-                            <div id="gpu-server-hint" style="font-size: 12px; color: #777; margin-top: 4px;">ONの間はローカルモデル選択/ダウンロードは無効になります。POST multipart: file, language, translate_to_english</div>
+                            <div id="gpu-hint" style="font-size: 12px; color: #777; margin-top: 4px;">ローカルPCのGPU（CUDA/Metal/Vulkan等）で推論を高速化します。ビルド時に対応機能を有効化する必要があります。</div>
                         </div>
                     </div>
                 </section>
